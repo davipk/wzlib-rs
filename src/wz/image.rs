@@ -17,6 +17,24 @@ use crate::crypto::{WZ_BMSCLASSIC_IV, WZ_GMSIV, WZ_MSEAIV};
 
 const KNOWN_IVS: [[u8; 4]; 3] = [WZ_BMSCLASSIC_IV, WZ_GMSIV, WZ_MSEAIV];
 
+// Image may use a different encryption key than the directory —
+// try all known IVs (common with JMS/KMS/CMS files).
+fn try_iv_fallback<R: Read + Seek>(
+    reader: &mut WzBinaryReader<R>,
+    offset: u64,
+    read_prop_string: impl Fn(&mut WzBinaryReader<R>) -> Result<String, WzError>,
+) -> WzResult<Vec<(String, WzProperty)>> {
+    for &iv in &KNOWN_IVS {
+        reader.wz_key = WzKey::new(iv);
+        if let Ok(s) = read_prop_string(reader) {
+            if s == "Property" {
+                return parse_property_list(reader, offset);
+            }
+        }
+    }
+    Err(WzError::InvalidImageHeader(0))
+}
+
 pub fn parse_image<R: Read + Seek>(
     reader: &mut WzBinaryReader<R>,
 ) -> WzResult<Vec<(String, WzProperty)>> {
@@ -32,21 +50,12 @@ pub fn parse_image<R: Read + Seek>(
                 return parse_property_list(reader, offset);
             }
 
-            // Image may use a different encryption key than the directory —
-            // try all known IVs (common with JMS/KMS/CMS files).
-            for &iv in &KNOWN_IVS {
-                reader.wz_key = WzKey::new(iv);
-                reader.seek(pos_after_header)?;
-                if let Ok(s) = reader.read_wz_string() {
-                    if let Ok(v) = reader.read_u16() {
-                        if s == "Property" && v == 0 {
-                            return parse_property_list(reader, offset);
-                        }
-                    }
-                }
-            }
-
-            Err(WzError::InvalidImageHeader(header_byte))
+            try_iv_fallback(reader, offset, |r| {
+                r.seek(pos_after_header)?;
+                let s = r.read_wz_string()?;
+                let v = r.read_u16()?;
+                if v == 0 { Ok(s) } else { Err(WzError::InvalidImageHeader(0x73)) }
+            })
         }
         0x1B => {
             let str_offset = reader.read_i32()?;
@@ -57,19 +66,10 @@ pub fn parse_image<R: Read + Seek>(
                 return parse_property_list(reader, offset);
             }
 
-            // Try all known IVs (val is unencrypted, only the string changes).
-            if val == 0 {
-                for &iv in &KNOWN_IVS {
-                    reader.wz_key = WzKey::new(iv);
-                    if let Ok(s) = reader.read_string_at_offset(string_pos) {
-                        if s == "Property" {
-                            return parse_property_list(reader, offset);
-                        }
-                    }
-                }
+            if val != 0 {
+                return Err(WzError::InvalidImageHeader(header_byte));
             }
-
-            Err(WzError::InvalidImageHeader(header_byte))
+            try_iv_fallback(reader, offset, |r| r.read_string_at_offset(string_pos))
         }
         0x01 => {
             let data = read_lua_data(reader)?;
@@ -186,10 +186,7 @@ fn parse_extended_property<R: Read + Seek>(
         "Property" => {
             let _padding = reader.read_u16()?;
             let properties = parse_property_list(reader, offset)?;
-            Ok(WzProperty::SubProperty {
-                name: String::new(),
-                properties,
-            })
+            Ok(WzProperty::SubProperty { properties })
         }
 
         "Canvas" => parse_canvas_property(reader, offset),
@@ -244,21 +241,13 @@ fn parse_extended_property<R: Read + Seek>(
             }
             let len = reader.read_compressed_int()? as usize;
             let data = reader.read_bytes(len)?;
-            Ok(WzProperty::RawData {
-                name: String::new(),
-                data,
-            })
+            Ok(WzProperty::RawData { data })
         }
 
         "Canvas#Video" => {
             let _skip = reader.read_u8()?;
             let has_props = reader.read_u8()?;
-            let properties = if has_props == 1 {
-                let _padding = reader.read_u16()?;
-                parse_property_list(reader, offset)?
-            } else {
-                Vec::new()
-            };
+            let properties = read_optional_properties(reader, offset, has_props)?;
             let video_type = reader.read_u8()?;
             let data_len = reader.read_compressed_int()?;
             let data_offset = reader.position()?;
@@ -275,7 +264,6 @@ fn parse_extended_property<R: Read + Seek>(
             };
 
             Ok(WzProperty::Video {
-                name: String::new(),
                 video_type,
                 properties,
                 data_offset,
@@ -290,18 +278,26 @@ fn parse_extended_property<R: Read + Seek>(
     }
 }
 
+fn read_optional_properties<R: Read + Seek>(
+    reader: &mut WzBinaryReader<R>,
+    offset: u64,
+    flag: u8,
+) -> WzResult<Vec<(String, WzProperty)>> {
+    if flag == 1 {
+        let _padding = reader.read_u16()?;
+        parse_property_list(reader, offset)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
 fn parse_canvas_property<R: Read + Seek>(
     reader: &mut WzBinaryReader<R>,
     offset: u64,
 ) -> WzResult<WzProperty> {
     let _skip = reader.read_u8()?;
     let has_children = reader.read_u8()?;
-    let properties = if has_children == 1 {
-        let _padding = reader.read_u16()?;
-        parse_property_list(reader, offset)?
-    } else {
-        Vec::new()
-    };
+    let properties = read_optional_properties(reader, offset, has_children)?;
 
     let width = reader.read_compressed_int()?;
     let height = reader.read_compressed_int()?;
@@ -323,7 +319,6 @@ fn parse_canvas_property<R: Read + Seek>(
     let format = WzPngFormat::from_raw(format_low, format_high);
 
     Ok(WzProperty::Canvas {
-        name: String::new(),
         width,
         height,
         format,
@@ -383,7 +378,6 @@ fn parse_sound_property<R: Read + Seek>(
     let audio_data = reader.read_bytes(sound_data_len as usize)?;
 
     Ok(WzProperty::Sound {
-        name: String::new(),
         duration_ms: duration,
         data: audio_data,
         header,

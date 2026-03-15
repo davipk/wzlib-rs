@@ -165,9 +165,10 @@ pub fn parse_wz_image(
     wz_data: &[u8],
     version_name: &str,
     img_offset: u32,
-    _img_size: u32,
+    img_size: u32,
     version_hash: u32,
 ) -> Result<String, JsError> {
+    let _ = img_size; // reserved for future use; kept for WASM API stability
     let maple_version = parse_maple_version(version_name)?;
 
     let (properties, _) = parse_image_props(wz_data, maple_version.iv(), img_offset, version_hash)?;
@@ -261,24 +262,10 @@ fn prop_to_json(name: &str, prop: &WzProperty) -> serde_json::Value {
     }
 }
 
-#[wasm_bindgen(js_name = "decodeWzCanvas")]
-pub fn decode_wz_canvas(
-    wz_data: &[u8],
-    version_name: &str,
-    img_offset: u32,
-    version_hash: u32,
-    prop_path: &str,
-) -> Result<Vec<u8>, JsError> {
-    let maple_version = parse_maple_version(version_name)?;
-
-    let (properties, detected_iv) = parse_image_props(wz_data, maple_version.iv(), img_offset, version_hash)?;
-
-    let canvas = find_property(&properties, prop_path, &|p| matches!(p, WzProperty::Canvas { .. }))
-        .ok_or_else(|| JsError::new(&format!("Canvas not found at path: {}", prop_path)))?;
-
-    match canvas {
+fn decode_canvas_prop(prop: &WzProperty, iv: &[u8; 4]) -> Result<Vec<u8>, JsError> {
+    match prop {
         WzProperty::Canvas { width, height, format, png_data, .. } => {
-            let wz_key = crypto::aes_encryption::generate_wz_key(&detected_iv, 0x10000);
+            let wz_key = crypto::aes_encryption::generate_wz_key(iv, 0x10000);
             let raw = image::decompress_png_data(png_data, Some(&wz_key))
                 .map_err(|e| JsError::new(&format!("Decompress failed: {}", e)))?;
 
@@ -293,6 +280,38 @@ pub fn decode_wz_canvas(
         }
         _ => Err(JsError::new("Property at path is not a Canvas")),
     }
+}
+
+fn extract_sound_prop(prop: &WzProperty) -> Result<Vec<u8>, JsError> {
+    match prop {
+        WzProperty::Sound { data, .. } => Ok(data.clone()),
+        _ => Err(JsError::new("Property at path is not a Sound")),
+    }
+}
+
+fn find_and_extract<'a>(
+    properties: &'a [(String, WzProperty)],
+    prop_path: &str,
+    type_name: &str,
+    predicate: &dyn Fn(&WzProperty) -> bool,
+) -> Result<&'a WzProperty, JsError> {
+    find_property(properties, prop_path, predicate)
+        .ok_or_else(|| JsError::new(&format!("{} not found at path: {}", type_name, prop_path)))
+}
+
+#[wasm_bindgen(js_name = "decodeWzCanvas")]
+pub fn decode_wz_canvas(
+    wz_data: &[u8],
+    version_name: &str,
+    img_offset: u32,
+    version_hash: u32,
+    prop_path: &str,
+) -> Result<Vec<u8>, JsError> {
+    let maple_version = parse_maple_version(version_name)?;
+    let (properties, detected_iv) = parse_image_props(wz_data, maple_version.iv(), img_offset, version_hash)?;
+
+    let canvas = find_and_extract(&properties, prop_path, "Canvas", &|p| matches!(p, WzProperty::Canvas { .. }))?;
+    decode_canvas_prop(canvas, &detected_iv)
 }
 
 fn find_property<'a>(
@@ -327,7 +346,7 @@ fn find_property<'a>(
                 if let Some(children) = prop.children() {
                     return find_property(children, "", predicate);
                 }
-                return Some(prop);
+                return None;
             }
             if let Some(children) = prop.children() {
                 return find_property(children, rest, predicate);
@@ -346,15 +365,23 @@ pub fn extract_wz_sound(
     prop_path: &str,
 ) -> Result<Vec<u8>, JsError> {
     let maple_version = parse_maple_version(version_name)?;
-
     let (properties, _) = parse_image_props(wz_data, maple_version.iv(), img_offset, version_hash)?;
 
-    let sound = find_property(&properties, prop_path, &|p| matches!(p, WzProperty::Sound { .. }))
-        .ok_or_else(|| JsError::new(&format!("Sound not found at path: {}", prop_path)))?;
+    let sound = find_and_extract(&properties, prop_path, "Sound", &|p| matches!(p, WzProperty::Sound { .. }))?;
+    extract_sound_prop(sound)
+}
 
-    match sound {
-        WzProperty::Sound { data, .. } => Ok(data.clone()),
-        _ => Err(JsError::new("Property at path is not a Sound")),
+fn extract_video_data(prop: &WzProperty, source_data: &[u8]) -> Result<Vec<u8>, JsError> {
+    match prop {
+        WzProperty::Video { data_offset, data_length, .. } => {
+            let offset = *data_offset as usize;
+            let length = *data_length as usize;
+            if offset + length > source_data.len() {
+                return Err(JsError::new("Video data offset/length exceeds bounds"));
+            }
+            Ok(source_data[offset..offset + length].to_vec())
+        }
+        _ => Err(JsError::new("Property at path is not a Video")),
     }
 }
 
@@ -367,23 +394,10 @@ pub fn extract_wz_video(
     prop_path: &str,
 ) -> Result<Vec<u8>, JsError> {
     let maple_version = parse_maple_version(version_name)?;
-
     let (properties, _) = parse_image_props(wz_data, maple_version.iv(), img_offset, version_hash)?;
 
-    let video = find_property(&properties, prop_path, &|p| matches!(p, WzProperty::Video { .. }))
-        .ok_or_else(|| JsError::new(&format!("Video not found at path: {}", prop_path)))?;
-
-    match video {
-        WzProperty::Video { data_offset, data_length, .. } => {
-            let offset = *data_offset as usize;
-            let length = *data_length as usize;
-            if offset + length > wz_data.len() {
-                return Err(JsError::new("Video data offset/length exceeds file bounds"));
-            }
-            Ok(wz_data[offset..offset + length].to_vec())
-        }
-        _ => Err(JsError::new("Property at path is not a Video")),
-    }
+    let video = find_and_extract(&properties, prop_path, "Video", &|p| matches!(p, WzProperty::Video { .. }))?;
+    extract_video_data(video, wz_data)
 }
 
 // Heuristic: tries all encryption variants, picks the one with the most printable ASCII names.
@@ -536,7 +550,6 @@ pub fn parse_ms_image(
     to_json_string(&children_to_json(&props))
 }
 
-/// Decode a canvas from a .ms entry.
 #[wasm_bindgen(js_name = "decodeMsCanvas")]
 pub fn decode_ms_canvas(
     data: &[u8],
@@ -544,40 +557,11 @@ pub fn decode_ms_canvas(
     entry_index: u32,
     prop_path: &str,
 ) -> Result<Vec<u8>, JsError> {
-    let iv = WzMapleVersion::Bms.iv();
     let props = parse_ms_image_props(data, file_name, entry_index)?;
-
-    let canvas =
-        find_property(&props, prop_path, &|p| matches!(p, WzProperty::Canvas { .. }))
-            .ok_or_else(|| JsError::new(&format!("Canvas not found at path: {}", prop_path)))?;
-
-    match canvas {
-        WzProperty::Canvas {
-            width,
-            height,
-            format,
-            png_data,
-            ..
-        } => {
-            let wz_key = crate::crypto::aes_encryption::generate_wz_key(&iv, 0x10000);
-            let raw = crate::image::decompress_png_data(png_data, Some(&wz_key))
-                .map_err(|e| JsError::new(&format!("Decompress failed: {}", e)))?;
-
-            let rgba =
-                crate::image::decode_pixels(&raw, *width as u32, *height as u32, *format)
-                    .map_err(|e| JsError::new(&format!("Pixel decode failed: {}", e)))?;
-
-            let mut result = Vec::with_capacity(8 + rgba.len());
-            result.extend_from_slice(&(*width as u32).to_le_bytes());
-            result.extend_from_slice(&(*height as u32).to_le_bytes());
-            result.extend_from_slice(&rgba);
-            Ok(result)
-        }
-        _ => Err(JsError::new("Property at path is not a Canvas")),
-    }
+    let canvas = find_and_extract(&props, prop_path, "Canvas", &|p| matches!(p, WzProperty::Canvas { .. }))?;
+    decode_canvas_prop(canvas, &WzMapleVersion::Bms.iv())
 }
 
-/// Extract sound data from a .ms entry.
 #[wasm_bindgen(js_name = "extractMsSound")]
 pub fn extract_ms_sound(
     data: &[u8],
@@ -586,18 +570,10 @@ pub fn extract_ms_sound(
     prop_path: &str,
 ) -> Result<Vec<u8>, JsError> {
     let props = parse_ms_image_props(data, file_name, entry_index)?;
-
-    let sound =
-        find_property(&props, prop_path, &|p| matches!(p, WzProperty::Sound { .. }))
-            .ok_or_else(|| JsError::new(&format!("Sound not found at path: {}", prop_path)))?;
-
-    match sound {
-        WzProperty::Sound { data, .. } => Ok(data.clone()),
-        _ => Err(JsError::new("Property at path is not a Sound")),
-    }
+    let sound = find_and_extract(&props, prop_path, "Sound", &|p| matches!(p, WzProperty::Sound { .. }))?;
+    extract_sound_prop(sound)
 }
 
-/// Extract video data from a .ms entry.
 #[wasm_bindgen(js_name = "extractMsVideo")]
 pub fn extract_ms_video(
     data: &[u8],
@@ -606,29 +582,15 @@ pub fn extract_ms_video(
     prop_path: &str,
 ) -> Result<Vec<u8>, JsError> {
     let props = parse_ms_image_props(data, file_name, entry_index)?;
+    let video = find_and_extract(&props, prop_path, "Video", &|p| matches!(p, WzProperty::Video { .. }))?;
 
-    let video =
-        find_property(&props, prop_path, &|p| matches!(p, WzProperty::Video { .. }))
-            .ok_or_else(|| JsError::new(&format!("Video not found at path: {}", prop_path)))?;
+    // Re-decrypt to access video data at the stored offset
+    let parsed = crate::wz::ms_file::parse_ms_file(data, file_name)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    let decrypted = crate::wz::ms_file::decrypt_entry_data(data, &parsed, entry_index as usize)
+        .map_err(|e| JsError::new(&e.to_string()))?;
 
-    match video {
-        WzProperty::Video { data_offset, data_length, .. } => {
-            // Re-decrypt to access the data at the stored offset
-            let parsed = crate::wz::ms_file::parse_ms_file(data, file_name)
-                .map_err(|e| JsError::new(&e.to_string()))?;
-            let decrypted =
-                crate::wz::ms_file::decrypt_entry_data(data, &parsed, entry_index as usize)
-                    .map_err(|e| JsError::new(&e.to_string()))?;
-
-            let offset = *data_offset as usize;
-            let length = *data_length as usize;
-            if offset + length > decrypted.len() {
-                return Err(JsError::new("Video data offset/length exceeds entry bounds"));
-            }
-            Ok(decrypted[offset..offset + length].to_vec())
-        }
-        _ => Err(JsError::new("Property at path is not a Video")),
-    }
+    extract_video_data(video, &decrypted)
 }
 
 /// Internal: decrypt a .ms entry and parse it as a WZ image.

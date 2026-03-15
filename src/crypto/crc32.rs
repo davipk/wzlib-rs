@@ -83,24 +83,21 @@ pub fn crc32_with_init(data: &[u8], initial: u32) -> u32 {
     crc
 }
 
-pub fn crc32_int(value: i32, initial: u32, xor_initial: bool) -> u32 {
-    let bytes = value.to_le_bytes();
+fn crc32_typed(bytes: &[u8], initial: u32, xor_initial: bool) -> u32 {
     let init = if xor_initial {
         initial ^ (bytes.as_ptr() as u32)
     } else {
         initial
     };
-    crc32_with_init(&bytes, init)
+    crc32_with_init(bytes, init)
+}
+
+pub fn crc32_int(value: i32, initial: u32, xor_initial: bool) -> u32 {
+    crc32_typed(&value.to_le_bytes(), initial, xor_initial)
 }
 
 pub fn crc32_long(value: i64, initial: u32, xor_initial: bool) -> u32 {
-    let bytes = value.to_le_bytes();
-    let init = if xor_initial {
-        initial ^ (bytes.as_ptr() as u32)
-    } else {
-        initial
-    };
-    crc32_with_init(&bytes, init)
+    crc32_typed(&value.to_le_bytes(), initial, xor_initial)
 }
 
 #[cfg(test)]

@@ -31,16 +31,7 @@ fn shuffle(input_byte: u8, start: &mut [u8; 4]) {
     start[3] = a;
 
     // Combine into u32, rotate right by 29 (= left by 3), decompose back
-    let c: u32 = (start[0] as u32)
-        | ((start[1] as u32) << 8)
-        | ((start[2] as u32) << 16)
-        | ((start[3] as u32) << 24);
-    let c = c.rotate_right(29);
-
-    start[0] = (c & 0xFF) as u8;
-    start[1] = ((c >> 8) & 0xFF) as u8;
-    start[2] = ((c >> 16) & 0xFF) as u8;
-    start[3] = ((c >> 24) & 0xFF) as u8;
+    *start = u32::from_le_bytes(*start).rotate_right(29).to_le_bytes();
 }
 
 pub fn get_new_iv(old_iv: &[u8; 4]) -> [u8; 4] {

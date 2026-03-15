@@ -16,12 +16,10 @@ pub enum WzProperty {
     String(String), // 0x08
 
     SubProperty {
-        name: String,
         properties: Vec<(String, WzProperty)>,
     },
 
     Canvas {
-        name: String,
         width: i32,
         height: i32,
         format: WzPngFormat,
@@ -36,7 +34,6 @@ pub enum WzProperty {
     },
 
     Sound {
-        name: String,
         duration_ms: i32,
         data: Vec<u8>,
         header: Vec<u8>,
@@ -47,12 +44,10 @@ pub enum WzProperty {
     Lua(Vec<u8>),
 
     RawData {
-        name: String,
         data: Vec<u8>,
     },
 
     Video {
-        name: String,
         video_type: u8,
         properties: Vec<(String, WzProperty)>,
         data_offset: u64,
@@ -142,7 +137,6 @@ mod tests {
         assert_eq!(WzProperty::String("".into()).type_name(), "String");
         assert_eq!(
             WzProperty::SubProperty {
-                name: String::new(),
                 properties: vec![]
             }
             .type_name(),
@@ -150,7 +144,6 @@ mod tests {
         );
         assert_eq!(
             WzProperty::Canvas {
-                name: String::new(),
                 width: 0,
                 height: 0,
                 format: WzPngFormat::Bgra8888,
@@ -164,7 +157,6 @@ mod tests {
         assert_eq!(WzProperty::Convex { points: vec![] }.type_name(), "Convex");
         assert_eq!(
             WzProperty::Sound {
-                name: String::new(),
                 duration_ms: 0,
                 data: vec![],
                 header: vec![]
@@ -176,7 +168,6 @@ mod tests {
         assert_eq!(WzProperty::Lua(vec![]).type_name(), "Lua");
         assert_eq!(
             WzProperty::RawData {
-                name: String::new(),
                 data: vec![]
             }
             .type_name(),
@@ -184,7 +175,6 @@ mod tests {
         );
         assert_eq!(
             WzProperty::Video {
-                name: String::new(),
                 video_type: 0,
                 properties: vec![],
                 data_offset: 0,
@@ -265,7 +255,6 @@ mod tests {
     #[test]
     fn test_children_sub_property() {
         let prop = WzProperty::SubProperty {
-            name: "root".into(),
             properties: vec![("a".into(), WzProperty::Int(1))],
         };
         let kids = prop.children().unwrap();
@@ -276,7 +265,6 @@ mod tests {
     #[test]
     fn test_children_canvas() {
         let prop = WzProperty::Canvas {
-            name: String::new(),
             width: 1,
             height: 1,
             format: WzPngFormat::Bgra8888,
@@ -289,7 +277,6 @@ mod tests {
     #[test]
     fn test_children_video() {
         let prop = WzProperty::Video {
-            name: String::new(),
             video_type: 0,
             properties: vec![("fps".into(), WzProperty::Int(30))],
             data_offset: 0,
@@ -312,7 +299,6 @@ mod tests {
     #[test]
     fn test_get_finds_child() {
         let prop = WzProperty::SubProperty {
-            name: String::new(),
             properties: vec![
                 ("x".into(), WzProperty::Int(10)),
                 ("y".into(), WzProperty::Int(20)),
@@ -325,7 +311,6 @@ mod tests {
     #[test]
     fn test_get_returns_none_for_missing() {
         let prop = WzProperty::SubProperty {
-            name: String::new(),
             properties: vec![("x".into(), WzProperty::Int(10))],
         };
         assert!(prop.get("z").is_none());

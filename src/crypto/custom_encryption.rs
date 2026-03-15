@@ -3,22 +3,6 @@
 //! Ported from MapleLib's `MapleCustomEncryption.cs`.
 //! Used for older WZ data that doesn't use AES.
 
-#[inline]
-fn rol(mut val: u8, num: u32) -> u8 {
-    for _ in 0..num {
-        val = val.rotate_left(1);
-    }
-    val
-}
-
-#[inline]
-fn ror(mut val: u8, num: u32) -> u8 {
-    for _ in 0..num {
-        val = val.rotate_right(1);
-    }
-    val
-}
-
 pub fn maple_custom_encrypt(data: &mut [u8]) {
     let size = data.len();
     if size == 0 {
@@ -31,11 +15,11 @@ pub fn maple_custom_encrypt(data: &mut [u8]) {
         for j in (1..=size).rev() {
             let idx = size - j;
             let mut c = data[idx];
-            c = rol(c, 3);
+            c = c.rotate_left(3);
             c = c.wrapping_add(j as u8);
             c ^= a;
             a = c;
-            c = ror(a, j as u32);
+            c = a.rotate_right(j as u32);
             c ^= 0xFF;
             c = c.wrapping_add(0x48);
             data[idx] = c;
@@ -46,12 +30,12 @@ pub fn maple_custom_encrypt(data: &mut [u8]) {
         for j in (1..=size).rev() {
             let idx = j - 1;
             let mut c = data[idx];
-            c = rol(c, 4);
+            c = c.rotate_left(4);
             c = c.wrapping_add(j as u8);
             c ^= a;
             a = c;
             c ^= 0x13;
-            c = ror(c, 3);
+            c = c.rotate_right(3);
             data[idx] = c;
         }
     }
@@ -69,12 +53,12 @@ pub fn maple_custom_decrypt(data: &mut [u8]) {
         for j in (1..=size).rev() {
             let idx = j - 1;
             let mut c = data[idx];
-            c = rol(c, 3);
+            c = c.rotate_left(3);
             c ^= 0x13;
             let a = c;
             c ^= b;
             c = c.wrapping_sub(j as u8);
-            c = ror(c, 4);
+            c = c.rotate_right(4);
             b = a;
             data[idx] = c;
         }
@@ -86,11 +70,11 @@ pub fn maple_custom_decrypt(data: &mut [u8]) {
             let mut c = data[idx];
             c = c.wrapping_sub(0x48);
             c ^= 0xFF;
-            c = rol(c, j as u32);
+            c = c.rotate_left(j as u32);
             let a = c;
             c ^= b;
             c = c.wrapping_sub(j as u8);
-            c = ror(c, 3);
+            c = c.rotate_right(3);
             b = a;
             data[idx] = c;
         }

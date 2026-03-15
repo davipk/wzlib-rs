@@ -143,33 +143,34 @@ impl Snow2 {
         }
     }
 
+    #[inline]
+    fn next_keystream_word(&mut self) -> u32 {
+        if self.cur_index >= 16 {
+            self.refresh_keystream();
+            self.cur_index = 0;
+        }
+        let word = self.keystream[self.cur_index];
+        self.cur_index += 1;
+        word
+    }
+
     pub fn process(&mut self, data: &mut [u8]) {
         let mut pos = 0;
         while pos + 4 <= data.len() {
-            if self.cur_index >= 16 {
-                self.refresh_keystream();
-                self.cur_index = 0;
-            }
-
+            let ks = self.next_keystream_word();
             let word = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
             let result = if self.encrypting {
-                word.wrapping_add(self.keystream[self.cur_index])
+                word.wrapping_add(ks)
             } else {
-                word.wrapping_sub(self.keystream[self.cur_index])
+                word.wrapping_sub(ks)
             };
             data[pos..pos + 4].copy_from_slice(&result.to_le_bytes());
-
-            self.cur_index += 1;
             pos += 4;
         }
 
         // Handle remaining bytes (< 4)
         if pos < data.len() {
-            if self.cur_index >= 16 {
-                self.refresh_keystream();
-                self.cur_index = 0;
-            }
-            let ks_bytes = self.keystream[self.cur_index].to_le_bytes();
+            let ks_bytes = self.next_keystream_word().to_le_bytes();
             for (i, byte) in data[pos..].iter_mut().enumerate() {
                 if self.encrypting {
                     *byte = byte.wrapping_add(ks_bytes[i]);
@@ -177,7 +178,6 @@ impl Snow2 {
                     *byte = byte.wrapping_sub(ks_bytes[i]);
                 }
             }
-            self.cur_index += 1;
         }
     }
 
