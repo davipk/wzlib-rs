@@ -21,34 +21,6 @@ impl WzMapleVersion {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WzObjectType {
-    File,
-    Image,
-    Directory,
-    Property,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WzPropertyType {
-    Null,
-    Short,
-    Int,
-    Long,
-    Float,
-    Double,
-    String,
-    SubProperty,
-    Canvas,
-    Vector,
-    Convex,
-    Sound,
-    Uol,
-    Lua,
-    Png,
-    RawData,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WzDirectoryType {
     UnknownType = 1,

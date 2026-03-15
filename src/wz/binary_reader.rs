@@ -37,13 +37,6 @@ impl<R: Read + Seek> WzBinaryReader<R> {
         Ok(())
     }
 
-    // Matches C#'s `SetOffsetFromFStartToPosition`: adjusts by `start_offset`
-    // so sub-readers (with non-zero start_offset) seek correctly.
-    pub fn seek_from_data_start(&mut self, offset: u32) -> WzResult<()> {
-        let pos = self.header.data_start as u64 + offset as u64 - self.start_offset;
-        self.seek(pos)
-    }
-
     pub fn available(&mut self) -> WzResult<u64> {
         let pos = self.position()?;
         let end = self.header.data_start as u64 + self.header.file_size;

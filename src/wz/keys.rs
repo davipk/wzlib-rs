@@ -38,9 +38,6 @@ impl WzKey {
         self.iv
     }
 
-    pub fn is_empty_iv(&self) -> bool {
-        self.iv == [0u8; 4]
-    }
 }
 
 impl std::ops::Index<usize> for WzKey {
@@ -54,20 +51,6 @@ impl std::ops::Index<usize> for WzKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── new / is_empty_iv ─────────────────────────────────────────
-
-    #[test]
-    fn test_new_zero_iv_is_empty() {
-        let key = WzKey::new([0; 4]);
-        assert!(key.is_empty_iv());
-    }
-
-    #[test]
-    fn test_new_nonzero_iv_not_empty() {
-        let key = WzKey::new([0x4D, 0x23, 0xC7, 0x2B]); // GMS IV
-        assert!(!key.is_empty_iv());
-    }
 
     // ── ensure_size ───────────────────────────────────────────────
 

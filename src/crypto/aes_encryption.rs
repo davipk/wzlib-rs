@@ -15,43 +15,6 @@ fn expand_iv(iv: &[u8; 4]) -> [u8; 16] {
     block
 }
 
-// NOT standard AES-CTR/CBC — MapleStory uses AES-ECB to generate a keystream,
-// then XORs data in variable-size chunks (0x5B0 first, 0x5B4 after).
-pub fn maple_aes_crypt(iv: &[u8; 4], data: &mut [u8]) {
-    maple_aes_crypt_with_key(iv, data, &trimmed_user_key());
-}
-
-pub fn maple_aes_crypt_with_key(iv: &[u8; 4], data: &mut [u8], key: &[u8; 32]) {
-    let cipher = Aes256::new(key.into());
-    let length = data.len();
-    let mut pos = 0;
-    let mut first_chunk = true;
-
-    while pos < length {
-        let chunk_size = if first_chunk { 0x5B0 } else { 0x5B4 };
-        first_chunk = false;
-
-        let remaining = length - pos;
-        let this_chunk = remaining.min(chunk_size);
-
-        let mut my_iv = expand_iv(iv);
-
-        for x in 0..this_chunk {
-            let iv_offset = x % 16;
-            if iv_offset == 0 {
-                // Re-encrypt the IV block to produce new keystream
-                let block = aes::Block::from(my_iv);
-                let mut encrypted = block;
-                cipher.encrypt_block(&mut encrypted);
-                my_iv = encrypted.into();
-            }
-            data[pos + x] ^= my_iv[iv_offset];
-        }
-
-        pos += this_chunk;
-    }
-}
-
 // Key generation from `WzMutableKey`: repeatedly AES-ECB encrypts blocks.
 // Block 0 = IV repeated 4x, Block N = previous encrypted block.
 pub fn generate_wz_key(iv: &[u8; 4], size: usize) -> Vec<u8> {
@@ -138,18 +101,6 @@ mod tests {
         let ems = generate_wz_key(&crate::crypto::WZ_MSEAIV, 32);
         assert_ne!(gms, ems);
         assert!(ems[..16].iter().any(|&b| b != 0));
-    }
-
-    #[test]
-    fn test_maple_aes_crypt_xor_involution() {
-        // maple_aes_crypt is XOR-based, so applying it twice restores original
-        let iv = [0x4D, 0x23, 0xC7, 0x2B];
-        let original = b"The quick brown fox jumps".to_vec();
-        let mut data = original.clone();
-        maple_aes_crypt(&iv, &mut data);
-        assert_ne!(data, original); // encrypted differs
-        maple_aes_crypt(&iv, &mut data);
-        assert_eq!(data, original); // restored
     }
 
     #[test]

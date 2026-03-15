@@ -132,15 +132,6 @@ impl WzFile {
         ))
     }
 
-    pub fn parse_from_reader<R: Read>(
-        reader: &mut R,
-        maple_version: WzMapleVersion,
-        expected_version: Option<i16>,
-    ) -> WzResult<Self> {
-        let mut data = Vec::new();
-        reader.read_to_end(&mut data)?;
-        Self::parse(&data, maple_version, expected_version)
-    }
 }
 
 fn check_64bit_client<R: Read + Seek>(

@@ -669,7 +669,7 @@ mod tests {
             assert_eq!(*x, 10);
             assert_eq!(*y, 20);
         } else {
-            panic!("Expected Vector, got {:?}", props[0].1.type_name());
+            panic!("Expected Vector, got {:?}", props[0].1);
         }
     }
 
@@ -750,7 +750,7 @@ mod tests {
             assert!(properties.is_empty());
             assert_eq!(png_data, &png_payload);
         } else {
-            panic!("Expected Canvas, got {:?}", props[0].1.type_name());
+            panic!("Expected Canvas, got {:?}", props[0].1);
         }
     }
 
@@ -847,7 +847,7 @@ mod tests {
             // header = sound_header(51) + unk1(1) + wav_format(wav_format_len)
             assert_eq!(header.len(), SOUND_HEADER_LEN + 1 + wav_format_len as usize);
         } else {
-            panic!("Expected Sound, got {:?}", props[0].1.type_name());
+            panic!("Expected Sound, got {:?}", props[0].1);
         }
     }
 
@@ -900,7 +900,7 @@ mod tests {
         if let WzProperty::Uol(path) = &props[0].1 {
             assert_eq!(path, "../stand/0");
         } else {
-            panic!("Expected Uol, got {:?}", props[0].1.type_name());
+            panic!("Expected Uol, got {:?}", props[0].1);
         }
     }
 

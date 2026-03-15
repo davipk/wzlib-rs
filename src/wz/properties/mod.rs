@@ -57,27 +57,6 @@ pub enum WzProperty {
 }
 
 impl WzProperty {
-    pub fn type_name(&self) -> &'static str {
-        match self {
-            WzProperty::Null => "Null",
-            WzProperty::Short(_) => "Short",
-            WzProperty::Int(_) => "Int",
-            WzProperty::Long(_) => "Long",
-            WzProperty::Float(_) => "Float",
-            WzProperty::Double(_) => "Double",
-            WzProperty::String(_) => "String",
-            WzProperty::SubProperty { .. } => "SubProperty",
-            WzProperty::Canvas { .. } => "Canvas",
-            WzProperty::Vector { .. } => "Vector",
-            WzProperty::Convex { .. } => "Convex",
-            WzProperty::Sound { .. } => "Sound",
-            WzProperty::Uol(_) => "UOL",
-            WzProperty::Lua(_) => "Lua",
-            WzProperty::RawData { .. } => "RawData",
-            WzProperty::Video { .. } => "Video",
-        }
-    }
-
     pub fn as_int(&self) -> Option<i64> {
         match self {
             WzProperty::Short(v) => Some(*v as i64),
@@ -123,68 +102,6 @@ impl WzProperty {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── type_name ──────────────────────────────────────────────────
-
-    #[test]
-    fn test_type_name_all_variants() {
-        assert_eq!(WzProperty::Null.type_name(), "Null");
-        assert_eq!(WzProperty::Short(0).type_name(), "Short");
-        assert_eq!(WzProperty::Int(0).type_name(), "Int");
-        assert_eq!(WzProperty::Long(0).type_name(), "Long");
-        assert_eq!(WzProperty::Float(0.0).type_name(), "Float");
-        assert_eq!(WzProperty::Double(0.0).type_name(), "Double");
-        assert_eq!(WzProperty::String("".into()).type_name(), "String");
-        assert_eq!(
-            WzProperty::SubProperty {
-                properties: vec![]
-            }
-            .type_name(),
-            "SubProperty"
-        );
-        assert_eq!(
-            WzProperty::Canvas {
-                width: 0,
-                height: 0,
-                format: WzPngFormat::Bgra8888,
-                properties: vec![],
-                png_data: vec![]
-            }
-            .type_name(),
-            "Canvas"
-        );
-        assert_eq!(WzProperty::Vector { x: 0, y: 0 }.type_name(), "Vector");
-        assert_eq!(WzProperty::Convex { points: vec![] }.type_name(), "Convex");
-        assert_eq!(
-            WzProperty::Sound {
-                duration_ms: 0,
-                data: vec![],
-                header: vec![]
-            }
-            .type_name(),
-            "Sound"
-        );
-        assert_eq!(WzProperty::Uol("".into()).type_name(), "UOL");
-        assert_eq!(WzProperty::Lua(vec![]).type_name(), "Lua");
-        assert_eq!(
-            WzProperty::RawData {
-                data: vec![]
-            }
-            .type_name(),
-            "RawData"
-        );
-        assert_eq!(
-            WzProperty::Video {
-                video_type: 0,
-                properties: vec![],
-                data_offset: 0,
-                data_length: 0,
-                mcv_header: None,
-            }
-            .type_name(),
-            "Video"
-        );
-    }
 
     // ── as_int ─────────────────────────────────────────────────────
 

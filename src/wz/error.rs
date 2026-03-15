@@ -19,9 +19,6 @@ pub enum WzError {
     #[error("Unknown property type: {0}")]
     UnknownPropertyType(String),
 
-    #[error("Invalid string encoding at offset {0}")]
-    InvalidString(u64),
-
     #[error("Decompression failed: {0}")]
     DecompressionFailed(String),
 
