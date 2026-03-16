@@ -182,22 +182,23 @@ fn parse_extended_property<R: Read + Seek>(
         }
     };
 
+    use super::{WZ_TYPE_PROPERTY, WZ_TYPE_CANVAS, WZ_TYPE_VECTOR, WZ_TYPE_CONVEX, WZ_TYPE_SOUND, WZ_TYPE_UOL, WZ_TYPE_RAW_DATA, WZ_TYPE_VIDEO};
     match type_str.as_str() {
-        "Property" => {
+        WZ_TYPE_PROPERTY => {
             let _padding = reader.read_u16()?;
             let properties = parse_property_list(reader, offset)?;
             Ok(WzProperty::SubProperty { properties })
         }
 
-        "Canvas" => parse_canvas_property(reader, offset),
+        WZ_TYPE_CANVAS => parse_canvas_property(reader, offset),
 
-        "Shape2D#Vector2D" => {
+        WZ_TYPE_VECTOR => {
             let x = reader.read_compressed_int()?;
             let y = reader.read_compressed_int()?;
             Ok(WzProperty::Vector { x, y })
         }
 
-        "Shape2D#Convex2D" => {
+        WZ_TYPE_CONVEX => {
             let count = reader.read_compressed_int()?;
             if !(0..=super::MAX_CONVEX_POINTS).contains(&count) {
                 return Err(WzError::Custom(format!("Invalid convex point count: {}", count)));
@@ -209,9 +210,9 @@ fn parse_extended_property<R: Read + Seek>(
             Ok(WzProperty::Convex { points })
         }
 
-        "Sound_DX8" => parse_sound_property(reader),
+        WZ_TYPE_SOUND => parse_sound_property(reader),
 
-        "UOL" => {
+        WZ_TYPE_UOL => {
             let _skip = reader.read_u8()?;
             let uol_type = reader.read_u8()?;
             let path = match uol_type {
@@ -230,7 +231,7 @@ fn parse_extended_property<R: Read + Seek>(
             Ok(WzProperty::Uol(path))
         }
 
-        "RawData" => {
+        WZ_TYPE_RAW_DATA => {
             let type_byte = reader.read_u8()?;
             if type_byte == 1 {
                 let has_props = reader.read_u8()?;
@@ -244,7 +245,7 @@ fn parse_extended_property<R: Read + Seek>(
             Ok(WzProperty::RawData { data })
         }
 
-        "Canvas#Video" => {
+        WZ_TYPE_VIDEO => {
             let _skip = reader.read_u8()?;
             let has_props = reader.read_u8()?;
             let properties = read_optional_properties(reader, offset, has_props)?;

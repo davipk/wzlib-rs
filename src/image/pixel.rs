@@ -14,82 +14,63 @@ fn init_rgba(data: &[u8], pixel_count: usize, bytes_per_pixel: usize, format: &s
     Ok(vec![0u8; pixel_count * 4])
 }
 
-pub fn bgra4444_to_rgba(data: &[u8], pixel_count: usize) -> WzResult<Vec<u8>> {
-    let mut rgba = init_rgba(data, pixel_count, 2, "BGRA4444")?;
-
+/// Generic per-pixel converter: validates, allocates, and runs a closure for each pixel.
+fn convert_pixels(
+    data: &[u8],
+    pixel_count: usize,
+    bpp: usize,
+    format: &str,
+    f: impl Fn(&[u8], &mut [u8]),
+) -> WzResult<Vec<u8>> {
+    let mut rgba = init_rgba(data, pixel_count, bpp, format)?;
     for i in 0..pixel_count {
-        let lo = data[i * 2];
-        let hi = data[i * 2 + 1];
-
-        // BGRA4444: lo = [B3..B0 | G3..G0], hi = [R3..R0 | A3..A0]
-        let b4 = lo & 0x0F;
-        let g4 = (lo >> 4) & 0x0F;
-        let r4 = hi & 0x0F;
-        let a4 = (hi >> 4) & 0x0F;
-
-        // Expand 4-bit to 8-bit: duplicate nibble
-        rgba[i * 4] = r4 | (r4 << 4);
-        rgba[i * 4 + 1] = g4 | (g4 << 4);
-        rgba[i * 4 + 2] = b4 | (b4 << 4);
-        rgba[i * 4 + 3] = a4 | (a4 << 4);
+        f(&data[i * bpp..], &mut rgba[i * 4..]);
     }
-
     Ok(rgba)
+}
+
+pub fn bgra4444_to_rgba(data: &[u8], pixel_count: usize) -> WzResult<Vec<u8>> {
+    // BGRA4444: lo = [B3..B0 | G3..G0], hi = [R3..R0 | A3..A0]
+    convert_pixels(data, pixel_count, 2, "BGRA4444", |src, dst| {
+        let (b4, g4) = (src[0] & 0x0F, (src[0] >> 4) & 0x0F);
+        let (r4, a4) = (src[1] & 0x0F, (src[1] >> 4) & 0x0F);
+        dst[0] = r4 | (r4 << 4);
+        dst[1] = g4 | (g4 << 4);
+        dst[2] = b4 | (b4 << 4);
+        dst[3] = a4 | (a4 << 4);
+    })
 }
 
 pub fn bgra8888_to_rgba(data: &[u8], pixel_count: usize) -> WzResult<Vec<u8>> {
-    let mut rgba = init_rgba(data, pixel_count, 4, "BGRA8888")?;
-
-    for i in 0..pixel_count {
-        let b = data[i * 4];
-        let g = data[i * 4 + 1];
-        let r = data[i * 4 + 2];
-        let a = data[i * 4 + 3];
-
-        rgba[i * 4] = r;
-        rgba[i * 4 + 1] = g;
-        rgba[i * 4 + 2] = b;
-        rgba[i * 4 + 3] = a;
-    }
-
-    Ok(rgba)
+    convert_pixels(data, pixel_count, 4, "BGRA8888", |src, dst| {
+        dst[0] = src[2]; // R
+        dst[1] = src[1]; // G
+        dst[2] = src[0]; // B
+        dst[3] = src[3]; // A
+    })
 }
 
 pub fn argb1555_to_rgba(data: &[u8], pixel_count: usize) -> WzResult<Vec<u8>> {
-    let mut rgba = init_rgba(data, pixel_count, 2, "ARGB1555")?;
-
-    for i in 0..pixel_count {
-        let val = u16::from_le_bytes([data[i * 2], data[i * 2 + 1]]);
-
-        let a1 = (val >> 15) & 0x01;
+    convert_pixels(data, pixel_count, 2, "ARGB1555", |src, dst| {
+        let val = u16::from_le_bytes([src[0], src[1]]);
         let r5 = (val >> 10) & 0x1F;
         let g5 = (val >> 5) & 0x1F;
         let b5 = val & 0x1F;
-
-        // Expand 5-bit to 8-bit
-        rgba[i * 4] = ((r5 << 3) | (r5 >> 2)) as u8;
-        rgba[i * 4 + 1] = ((g5 << 3) | (g5 >> 2)) as u8;
-        rgba[i * 4 + 2] = ((b5 << 3) | (b5 >> 2)) as u8;
-        rgba[i * 4 + 3] = if a1 != 0 { 0xFF } else { 0x00 };
-    }
-
-    Ok(rgba)
+        dst[0] = ((r5 << 3) | (r5 >> 2)) as u8;
+        dst[1] = ((g5 << 3) | (g5 >> 2)) as u8;
+        dst[2] = ((b5 << 3) | (b5 >> 2)) as u8;
+        dst[3] = if val >> 15 != 0 { 0xFF } else { 0x00 };
+    })
 }
 
 pub fn rgb565_to_rgba(data: &[u8], pixel_count: usize) -> WzResult<Vec<u8>> {
-    let mut rgba = init_rgba(data, pixel_count, 2, "RGB565")?;
-
-    for i in 0..pixel_count {
-        let val = u16::from_le_bytes([data[i * 2], data[i * 2 + 1]]);
-        let (r, g, b) = rgb565_decode(val);
-
-        rgba[i * 4] = r;
-        rgba[i * 4 + 1] = g;
-        rgba[i * 4 + 2] = b;
-        rgba[i * 4 + 3] = 0xFF;
-    }
-
-    Ok(rgba)
+    convert_pixels(data, pixel_count, 2, "RGB565", |src, dst| {
+        let (r, g, b) = rgb565_decode(u16::from_le_bytes([src[0], src[1]]));
+        dst[0] = r;
+        dst[1] = g;
+        dst[2] = b;
+        dst[3] = 0xFF;
+    })
 }
 
 pub fn rgb565_block_to_rgba(data: &[u8], width: u32, height: u32) -> WzResult<Vec<u8>> {
@@ -130,77 +111,45 @@ pub fn rgb565_block_to_rgba(data: &[u8], width: u32, height: u32) -> WzResult<Ve
 }
 
 pub fn r16_to_rgba(data: &[u8], pixel_count: usize) -> WzResult<Vec<u8>> {
-    let mut rgba = init_rgba(data, pixel_count, 2, "R16")?;
-
-    for i in 0..pixel_count {
-        let val = u16::from_le_bytes([data[i * 2], data[i * 2 + 1]]);
-        rgba[i * 4] = (val >> 8) as u8;     // R (high byte of 16-bit)
-        rgba[i * 4 + 1] = 0;                // G
-        rgba[i * 4 + 2] = 0;                // B
-        rgba[i * 4 + 3] = 0xFF;             // A
-    }
-
-    Ok(rgba)
+    convert_pixels(data, pixel_count, 2, "R16", |src, dst| {
+        dst[0] = src[1];  // R (high byte of 16-bit)
+        dst[1] = 0;       // G
+        dst[2] = 0;       // B
+        dst[3] = 0xFF;    // A
+    })
 }
 
 pub fn a8_to_rgba(data: &[u8], pixel_count: usize) -> WzResult<Vec<u8>> {
-    let mut rgba = init_rgba(data, pixel_count, 1, "A8")?;
-
-    for i in 0..pixel_count {
-        rgba[i * 4] = 0xFF;         // R
-        rgba[i * 4 + 1] = 0xFF;     // G
-        rgba[i * 4 + 2] = 0xFF;     // B
-        rgba[i * 4 + 3] = data[i];  // A
-    }
-
-    Ok(rgba)
+    convert_pixels(data, pixel_count, 1, "A8", |src, dst| {
+        dst[0] = 0xFF;    // R
+        dst[1] = 0xFF;    // G
+        dst[2] = 0xFF;    // B
+        dst[3] = src[0];  // A
+    })
 }
 
 pub fn rgba1010102_to_rgba(data: &[u8], pixel_count: usize) -> WzResult<Vec<u8>> {
-    let mut rgba = init_rgba(data, pixel_count, 4, "RGBA1010102")?;
-
-    for i in 0..pixel_count {
-        let val = u32::from_le_bytes([
-            data[i * 4],
-            data[i * 4 + 1],
-            data[i * 4 + 2],
-            data[i * 4 + 3],
-        ]);
-
-        let r10 = val & 0x3FF;
-        let g10 = (val >> 10) & 0x3FF;
-        let b10 = (val >> 20) & 0x3FF;
-        let a2 = (val >> 30) & 0x3;
-
+    convert_pixels(data, pixel_count, 4, "RGBA1010102", |src, dst| {
+        let val = u32::from_le_bytes([src[0], src[1], src[2], src[3]]);
         // Scale 10-bit → 8-bit (>> 2), 2-bit → 8-bit (* 85)
-        rgba[i * 4] = (r10 >> 2) as u8;
-        rgba[i * 4 + 1] = (g10 >> 2) as u8;
-        rgba[i * 4 + 2] = (b10 >> 2) as u8;
-        rgba[i * 4 + 3] = (a2 * 85) as u8;
-    }
-
-    Ok(rgba)
+        dst[0] = ((val & 0x3FF) >> 2) as u8;
+        dst[1] = (((val >> 10) & 0x3FF) >> 2) as u8;
+        dst[2] = (((val >> 20) & 0x3FF) >> 2) as u8;
+        dst[3] = (((val >> 30) & 0x3) * 85) as u8;
+    })
 }
 
 pub fn rgba32float_to_rgba(data: &[u8], pixel_count: usize) -> WzResult<Vec<u8>> {
-    let mut rgba = init_rgba(data, pixel_count, 16, "RGBA32Float")?;
-
-    for i in 0..pixel_count {
-        let off = i * 16;
-        let r = f32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]);
-        let g = f32::from_le_bytes([data[off + 4], data[off + 5], data[off + 6], data[off + 7]]);
-        let b =
-            f32::from_le_bytes([data[off + 8], data[off + 9], data[off + 10], data[off + 11]]);
-        let a =
-            f32::from_le_bytes([data[off + 12], data[off + 13], data[off + 14], data[off + 15]]);
-
-        rgba[i * 4] = (r.clamp(0.0, 1.0) * 255.0) as u8;
-        rgba[i * 4 + 1] = (g.clamp(0.0, 1.0) * 255.0) as u8;
-        rgba[i * 4 + 2] = (b.clamp(0.0, 1.0) * 255.0) as u8;
-        rgba[i * 4 + 3] = (a.clamp(0.0, 1.0) * 255.0) as u8;
-    }
-
-    Ok(rgba)
+    convert_pixels(data, pixel_count, 16, "RGBA32Float", |src, dst| {
+        let r = f32::from_le_bytes([src[0], src[1], src[2], src[3]]);
+        let g = f32::from_le_bytes([src[4], src[5], src[6], src[7]]);
+        let b = f32::from_le_bytes([src[8], src[9], src[10], src[11]]);
+        let a = f32::from_le_bytes([src[12], src[13], src[14], src[15]]);
+        dst[0] = (r.clamp(0.0, 1.0) * 255.0) as u8;
+        dst[1] = (g.clamp(0.0, 1.0) * 255.0) as u8;
+        dst[2] = (b.clamp(0.0, 1.0) * 255.0) as u8;
+        dst[3] = (a.clamp(0.0, 1.0) * 255.0) as u8;
+    })
 }
 
 #[inline]

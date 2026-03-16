@@ -17,6 +17,16 @@ pub struct WzBinaryReader<R: Read + Seek> {
     pub start_offset: u64,
 }
 
+macro_rules! impl_read_le {
+    ($($name:ident -> $ty:ty),+ $(,)?) => { $(
+        pub fn $name(&mut self) -> WzResult<$ty> {
+            let mut buf = [0u8; std::mem::size_of::<$ty>()];
+            self.reader.read_exact(&mut buf)?;
+            Ok(<$ty>::from_le_bytes(buf))
+        }
+    )+ };
+}
+
 impl<R: Read + Seek> WzBinaryReader<R> {
     pub fn new(reader: R, iv: [u8; 4], header: WzHeader, start_offset: u64) -> Self {
         WzBinaryReader {
@@ -45,56 +55,19 @@ impl<R: Read + Seek> WzBinaryReader<R> {
 
     // ── Primitive reads ──────────────────────────────────────────────
 
-    pub fn read_u8(&mut self) -> WzResult<u8> {
-        let mut buf = [0u8; 1];
-        self.reader.read_exact(&mut buf)?;
-        Ok(buf[0])
+    impl_read_le! {
+        read_u8  -> u8,
+        read_u16 -> u16,
+        read_i16 -> i16,
+        read_u32 -> u32,
+        read_i32 -> i32,
+        read_i64 -> i64,
+        read_f32 -> f32,
+        read_f64 -> f64,
     }
 
     pub fn read_i8(&mut self) -> WzResult<i8> {
         Ok(self.read_u8()? as i8)
-    }
-
-    pub fn read_u16(&mut self) -> WzResult<u16> {
-        let mut buf = [0u8; 2];
-        self.reader.read_exact(&mut buf)?;
-        Ok(u16::from_le_bytes(buf))
-    }
-
-    pub fn read_i16(&mut self) -> WzResult<i16> {
-        let mut buf = [0u8; 2];
-        self.reader.read_exact(&mut buf)?;
-        Ok(i16::from_le_bytes(buf))
-    }
-
-    pub fn read_u32(&mut self) -> WzResult<u32> {
-        let mut buf = [0u8; 4];
-        self.reader.read_exact(&mut buf)?;
-        Ok(u32::from_le_bytes(buf))
-    }
-
-    pub fn read_i32(&mut self) -> WzResult<i32> {
-        let mut buf = [0u8; 4];
-        self.reader.read_exact(&mut buf)?;
-        Ok(i32::from_le_bytes(buf))
-    }
-
-    pub fn read_i64(&mut self) -> WzResult<i64> {
-        let mut buf = [0u8; 8];
-        self.reader.read_exact(&mut buf)?;
-        Ok(i64::from_le_bytes(buf))
-    }
-
-    pub fn read_f32(&mut self) -> WzResult<f32> {
-        let mut buf = [0u8; 4];
-        self.reader.read_exact(&mut buf)?;
-        Ok(f32::from_le_bytes(buf))
-    }
-
-    pub fn read_f64(&mut self) -> WzResult<f64> {
-        let mut buf = [0u8; 8];
-        self.reader.read_exact(&mut buf)?;
-        Ok(f64::from_le_bytes(buf))
     }
 
     pub fn read_bytes(&mut self, len: usize) -> WzResult<Vec<u8>> {
@@ -171,7 +144,7 @@ impl<R: Read + Seek> WzBinaryReader<R> {
         self.wz_key.ensure_size(length * 2);
 
         let mut chars = Vec::with_capacity(length);
-        let mut mask: u16 = 0xAAAA;
+        let mut mask: u16 = super::WZ_UNICODE_MASK_INIT;
 
         for i in 0..length {
             let encrypted = self.read_u16()?;
@@ -212,7 +185,7 @@ impl<R: Read + Seek> WzBinaryReader<R> {
         self.wz_key.ensure_size(length);
 
         let mut bytes = self.read_bytes(length)?;
-        let mut mask: u8 = 0xAA;
+        let mut mask: u8 = super::WZ_ASCII_MASK_INIT;
 
         for (i, byte) in bytes.iter_mut().enumerate() {
             *byte ^= mask;

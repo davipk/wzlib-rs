@@ -87,32 +87,15 @@ export function renderPropertyLevel(container, props, depth, parentPath) {
           ensureChildrenRendered(propPath);
         }
 
-        if (isCanvas && !open) {
-          const holder = childContainer.querySelector('.canvas-loading');
-          if (holder && holder.dataset.loaded === 'false') {
-            holder.dataset.loaded = 'true';
-            holder.textContent = 'Decoding...';
-            loadCanvasPreview(holder, state.currentImgOffset, propPath, prop.width, prop.height, depth);
-          }
-        }
-
-        if (isSound && !open) {
-          const holder = childContainer.querySelector('.sound-loading');
-          if (holder && holder.dataset.loaded === 'false') {
-            holder.dataset.loaded = 'true';
-            holder.textContent = 'Extracting audio...';
-            loadSoundPlayer(holder, state.currentImgOffset, propPath, prop.duration_ms, depth);
-          }
-        }
-
-        if (isVideo && !open) {
-          const holder = childContainer.querySelector('.video-loading');
-          if (holder && holder.dataset.loaded === 'false') {
-            holder.dataset.loaded = 'true';
-            holder.textContent = 'Extracting video...';
-            loadVideoDownload(holder, state.currentImgOffset, propPath, prop, depth);
-          }
-        }
+        if (isCanvas && !open)
+          loadMediaIfNeeded(childContainer, '.canvas-loading', 'Decoding...', h =>
+            loadCanvasPreview(h, state.currentImgOffset, propPath, prop.width, prop.height, depth));
+        if (isSound && !open)
+          loadMediaIfNeeded(childContainer, '.sound-loading', 'Extracting audio...', h =>
+            loadSoundPlayer(h, state.currentImgOffset, propPath, prop.duration_ms, depth));
+        if (isVideo && !open)
+          loadMediaIfNeeded(childContainer, '.video-loading', 'Extracting video...', h =>
+            loadVideoDownload(h, state.currentImgOffset, propPath, prop, depth));
 
         if (childContainer._animPlayer) {
           if (!open) childContainer._animPlayer._anim.init();
@@ -157,6 +140,15 @@ export function expandToPath(targetPath) {
   }
 }
 
+function loadMediaIfNeeded(container, selector, loadingText, loaderFn) {
+  const holder = container.querySelector(selector);
+  if (holder && holder.dataset.loaded === 'false') {
+    holder.dataset.loaded = 'true';
+    holder.textContent = loadingText;
+    loaderFn(holder);
+  }
+}
+
 function createMediaHolder(className, text, depth) {
   const holder = document.createElement('div');
   holder.className = className;
@@ -166,101 +158,77 @@ function createMediaHolder(className, text, depth) {
   return holder;
 }
 
-// ── IMG opening ──────────────────────────────────────────────────────
+// ── IMG opening (shared) ─────────────────────────────────────────────
+
+async function openAndCacheImage({ cache, cacheKey, name, loadingText, parseLabel, parseFn, tableRows, onSave, viewKey, beforeParse }) {
+  if (!state.wzData) return;
+  if (beforeParse) beforeParse();
+
+  if (cache.has(cacheKey)) {
+    showProperties(name, cache.get(cacheKey), tableRows, onSave, viewKey);
+    return;
+  }
+
+  $.detail.innerHTML = `
+    <h2>${escapeHtml(name)}</h2>
+    <div class="img-parsing">${loadingText}</div>
+  `;
+
+  await new Promise(r => setTimeout(r, 0));
+
+  try {
+    const t0 = performance.now();
+    const json = parseFn();
+    const t1 = performance.now();
+    const properties = JSON.parse(json);
+    cache.set(cacheKey, properties);
+    $.statusParse.textContent = `${parseLabel} parsed in ${(t1 - t0).toFixed(1)}ms (${properties.length} props)`;
+    showProperties(name, properties, tableRows, onSave, viewKey);
+  } catch (e) {
+    $.detail.innerHTML = `
+      <h2>${escapeHtml(name)}</h2>
+      <table class="props">${tableRows}</table>
+      <div style="color: var(--accent); margin-top: 12px;">Parse error: ${escapeHtml(e.message)}</div>
+    `;
+    console.error(`${parseLabel} parse error:`, e);
+  }
+}
 
 export async function openImage(img) {
-  if (!state.wzData) return;
-
-  const cacheKey = img.offset;
-  if (imgCache.has(cacheKey)) {
-    showImageProperties(img, imgCache.get(cacheKey));
-    return;
-  }
-
-  $.detail.innerHTML = `
-    <h2>${escapeHtml(img.name)}</h2>
-    <div class="img-parsing">Parsing image...</div>
-  `;
-
-  await new Promise(r => setTimeout(r, 0));
-
-  try {
-    const t0 = performance.now();
-    const json = parseWzImage(state.wzData, state.wzVersionName, img.offset, img.size, state.wzVersionHash);
-    const t1 = performance.now();
-    const properties = JSON.parse(json);
-    imgCache.set(cacheKey, properties);
-    $.statusParse.textContent = `IMG parsed in ${(t1 - t0).toFixed(1)}ms (${properties.length} props)`;
-    showImageProperties(img, properties);
-  } catch (e) {
-    $.detail.innerHTML = `
-      <h2>${escapeHtml(img.name)}</h2>
-      <table class="props">
-        <tr><th>Type</th><td>Image</td></tr>
-        <tr><th>Size</th><td>${formatBytes(img.size)}</td></tr>
-        <tr><th>Offset</th><td>0x${img.offset.toString(16).toUpperCase()}</td></tr>
-      </table>
-      <div style="color: var(--accent); margin-top: 12px;">Parse error: ${escapeHtml(e.message)}</div>
-    `;
-    console.error('IMG parse error:', e);
-  }
+  return openAndCacheImage({
+    cache: imgCache,
+    cacheKey: img.offset,
+    name: img.name,
+    loadingText: 'Parsing image...',
+    parseLabel: 'IMG',
+    parseFn: () => parseWzImage(state.wzData, state.wzVersionName, img.offset, img.size, state.wzVersionHash),
+    tableRows: `
+      <tr><th>Type</th><td>Image</td></tr>
+      <tr><th>Size</th><td>${formatBytes(img.size)}</td></tr>
+      <tr><th>Offset</th><td>0x${img.offset.toString(16).toUpperCase()}</td></tr>
+    `,
+    onSave: () => saveCurrentImage(img.offset, img.name),
+    viewKey: img.offset,
+  });
 }
-
-function showImageProperties(img, properties) {
-  showProperties(img.name, properties, `
-    <tr><th>Type</th><td>Image</td></tr>
-    <tr><th>Size</th><td>${formatBytes(img.size)}</td></tr>
-    <tr><th>Offset</th><td>0x${img.offset.toString(16).toUpperCase()}</td></tr>
-  `, () => saveCurrentImage(img.offset, img.name), img.offset);
-}
-
-// ── MS image opening ─────────────────────────────────────────────────
 
 export async function openMsImage(entry) {
-  if (!state.wzData) return;
-
-  state.currentMsEntryIndex = entry.index;
-
-  if (msImgCache.has(entry.index)) {
-    showMsImageProperties(entry, msImgCache.get(entry.index));
-    return;
-  }
-
-  $.detail.innerHTML = `
-    <h2>${escapeHtml(entry.name)}</h2>
-    <div class="img-parsing">Decrypting &amp; parsing image...</div>
-  `;
-
-  await new Promise(r => setTimeout(r, 0));
-
-  try {
-    const t0 = performance.now();
-    const json = parseMsImage(state.wzData, state.msFileName, entry.index);
-    const t1 = performance.now();
-    const properties = JSON.parse(json);
-    msImgCache.set(entry.index, properties);
-    $.statusParse.textContent = `MS IMG parsed in ${(t1 - t0).toFixed(1)}ms (${properties.length} props)`;
-    showMsImageProperties(entry, properties);
-  } catch (e) {
-    $.detail.innerHTML = `
-      <h2>${escapeHtml(entry.name)}</h2>
-      <table class="props">
-        <tr><th>Type</th><td>MS Entry</td></tr>
-        <tr><th>Size</th><td>${formatBytes(entry.size)}</td></tr>
-        <tr><th>Index</th><td>${entry.index}</td></tr>
-      </table>
-      <div style="color: var(--accent); margin-top: 12px;">Parse error: ${escapeHtml(e.message)}</div>
-    `;
-    console.error('MS IMG parse error:', e);
-  }
-}
-
-function showMsImageProperties(entry, properties) {
-  showProperties(entry.name, properties, `
-    <tr><th>Type</th><td>MS Entry</td></tr>
-    <tr><th>Size</th><td>${formatBytes(entry.size)}</td></tr>
-    <tr><th>Index</th><td>${entry.index}</td></tr>
-  `, () => saveCurrentMsImage(entry.index, entry.name), entry.index);
+  return openAndCacheImage({
+    cache: msImgCache,
+    cacheKey: entry.index,
+    name: entry.name,
+    loadingText: 'Decrypting &amp; parsing image...',
+    parseLabel: 'MS IMG',
+    parseFn: () => parseMsImage(state.wzData, state.msFileName, entry.index),
+    tableRows: `
+      <tr><th>Type</th><td>MS Entry</td></tr>
+      <tr><th>Size</th><td>${formatBytes(entry.size)}</td></tr>
+      <tr><th>Index</th><td>${entry.index}</td></tr>
+    `,
+    onSave: () => saveCurrentMsImage(entry.index, entry.name),
+    viewKey: entry.index,
+    beforeParse: () => { state.currentMsEntryIndex = entry.index; },
+  });
 }
 
 function showProperties(name, properties, tableRows, onSave, viewKey) {

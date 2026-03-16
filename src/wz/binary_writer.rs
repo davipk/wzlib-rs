@@ -18,6 +18,15 @@ pub struct WzBinaryWriter<W: Write + Seek> {
     pub string_cache: HashMap<String, u32>,
 }
 
+macro_rules! impl_write_le {
+    ($($name:ident($ty:ty)),+ $(,)?) => { $(
+        pub fn $name(&mut self, val: $ty) -> WzResult<()> {
+            self.writer.write_all(&val.to_le_bytes())?;
+            Ok(())
+        }
+    )+ };
+}
+
 impl<W: Write + Seek> WzBinaryWriter<W> {
     pub fn new(writer: W, iv: [u8; 4], header: WzHeader) -> Self {
         WzBinaryWriter {
@@ -40,44 +49,15 @@ impl<W: Write + Seek> WzBinaryWriter<W> {
 
     // ── Primitive writes ─────────────────────────────────────────────
 
-    pub fn write_u8(&mut self, val: u8) -> WzResult<()> {
-        self.writer.write_all(&[val])?;
-        Ok(())
-    }
-
-    pub fn write_i16(&mut self, val: i16) -> WzResult<()> {
-        self.writer.write_all(&val.to_le_bytes())?;
-        Ok(())
-    }
-
-    pub fn write_u16(&mut self, val: u16) -> WzResult<()> {
-        self.writer.write_all(&val.to_le_bytes())?;
-        Ok(())
-    }
-
-    pub fn write_i32(&mut self, val: i32) -> WzResult<()> {
-        self.writer.write_all(&val.to_le_bytes())?;
-        Ok(())
-    }
-
-    pub fn write_u32(&mut self, val: u32) -> WzResult<()> {
-        self.writer.write_all(&val.to_le_bytes())?;
-        Ok(())
-    }
-
-    pub fn write_i64(&mut self, val: i64) -> WzResult<()> {
-        self.writer.write_all(&val.to_le_bytes())?;
-        Ok(())
-    }
-
-    pub fn write_f32(&mut self, val: f32) -> WzResult<()> {
-        self.writer.write_all(&val.to_le_bytes())?;
-        Ok(())
-    }
-
-    pub fn write_f64(&mut self, val: f64) -> WzResult<()> {
-        self.writer.write_all(&val.to_le_bytes())?;
-        Ok(())
+    impl_write_le! {
+        write_u8(u8),
+        write_i16(i16),
+        write_u16(u16),
+        write_i32(i32),
+        write_u32(u32),
+        write_i64(i64),
+        write_f32(f32),
+        write_f64(f64),
     }
 
     pub fn write_bytes(&mut self, data: &[u8]) -> WzResult<()> {
@@ -127,7 +107,7 @@ impl<W: Write + Seek> WzBinaryWriter<W> {
         }
 
         self.wz_key.ensure_size(length * 2);
-        let mut mask: u16 = 0xAAAA;
+        let mut mask: u16 = super::WZ_UNICODE_MASK_INIT;
 
         for (i, &ch) in chars.iter().enumerate() {
             let key_lo = self.wz_key[i * 2] as u16;
@@ -154,7 +134,7 @@ impl<W: Write + Seek> WzBinaryWriter<W> {
         }
 
         self.wz_key.ensure_size(length);
-        let mut mask: u8 = 0xAA;
+        let mut mask: u8 = super::WZ_ASCII_MASK_INIT;
 
         for (i, &byte) in bytes.iter().enumerate() {
             let encrypted = byte ^ self.wz_key[i] ^ mask;

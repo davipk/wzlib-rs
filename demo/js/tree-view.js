@@ -39,9 +39,7 @@ function renderDirNode(parent, dir, depth) {
   parent.appendChild(children);
 
   el.addEventListener('click', () => {
-    const isOpen = children.style.display !== 'none';
-    children.style.display = isOpen ? 'none' : '';
-    el.querySelector('.toggle').textContent = isOpen ? '\u25B6' : '\u25BC';
+    toggleTreeNode(el, children);
     selectNode(el, { type: 'directory', ...dir });
   });
 }
@@ -75,9 +73,17 @@ function createNodeEl(name, type, depth, childCount) {
   return el;
 }
 
+// ── Shared helpers ──────────────────────────────────────────────────
+
+function toggleTreeNode(el, children) {
+  const isOpen = children.style.display !== 'none';
+  children.style.display = isOpen ? 'none' : '';
+  el.querySelector('.toggle').textContent = isOpen ? '\u25B6' : '\u25BC';
+}
+
 // ── Node selection / detail panel ────────────────────────────────────
 
-function selectNode(el, data) {
+export function selectNode(el, data) {
   document.querySelectorAll('.tree-node.selected').forEach(n => n.classList.remove('selected'));
   el.classList.add('selected');
   state.selectedNode = data;
@@ -100,6 +106,14 @@ function showDetail(data) {
         <tr><th>Size</th><td>${data.size ?? '—'}</td></tr>
         <tr><th>Checksum</th><td>${data.checksum != null ? '0x' + (data.checksum >>> 0).toString(16).toUpperCase() : '—'}</td></tr>
         <tr><th>Offset</th><td>${data.offset != null ? '0x' + data.offset.toString(16).toUpperCase() : '—'}</td></tr>
+      </table>
+    `;
+  } else if (data.type === 'list-entry') {
+    $.detail.innerHTML = `
+      <h2>${escapeHtml(data.path)}</h2>
+      <table class="props">
+        <tr><th>Type</th><td>List Entry</td></tr>
+        <tr><th>Path</th><td>${escapeHtml(data.path)}</td></tr>
       </table>
     `;
   } else {
@@ -141,20 +155,14 @@ export function renderListEntries(entries) {
       el.dataset.nodeType = 'list-entry';
       el.dataset.name = name;
       el.addEventListener('click', () => {
-        document.querySelectorAll('.tree-node.selected').forEach(n => n.classList.remove('selected'));
-        el.classList.add('selected');
-        showListEntryDetail(path);
+        selectNode(el, { type: 'list-entry', path });
       });
       children.appendChild(el);
     }
 
     fragment.appendChild(children);
 
-    dirEl.addEventListener('click', () => {
-      const isOpen = children.style.display !== 'none';
-      children.style.display = isOpen ? 'none' : '';
-      dirEl.querySelector('.toggle').textContent = isOpen ? '\u25B6' : '\u25BC';
-    });
+    dirEl.addEventListener('click', () => toggleTreeNode(dirEl, children));
   }
 
   $.tree.appendChild(fragment);
@@ -172,18 +180,6 @@ export function renderListEntries(entries) {
       List.wz is a path index used by pre-Big Bang MapleStory clients.
       Each entry is a relative path to an .img file within Data.wz.
     </p>
-  `;
-}
-
-function showListEntryDetail(path) {
-  $.detailEmpty.style.display = 'none';
-  $.detail.style.display = '';
-  $.detail.innerHTML = `
-    <h2>${escapeHtml(path)}</h2>
-    <table class="props">
-      <tr><th>Type</th><td>List Entry</td></tr>
-      <tr><th>Path</th><td>${escapeHtml(path)}</td></tr>
-    </table>
   `;
 }
 
@@ -242,8 +238,7 @@ export function renderMsEntries(entries) {
       el.dataset.nodeType = 'ms-entry';
       el.dataset.name = name;
       el.addEventListener('click', () => {
-        document.querySelectorAll('.tree-node.selected').forEach(n => n.classList.remove('selected'));
-        el.classList.add('selected');
+        selectNode(el, { type: 'ms-entry' });
         openMsImage(entry);
       });
       children.appendChild(el);
@@ -251,11 +246,7 @@ export function renderMsEntries(entries) {
 
     fragment.appendChild(children);
 
-    dirEl.addEventListener('click', () => {
-      const isOpen = children.style.display !== 'none';
-      children.style.display = isOpen ? 'none' : '';
-      dirEl.querySelector('.toggle').textContent = isOpen ? '\u25B6' : '\u25BC';
-    });
+    dirEl.addEventListener('click', () => toggleTreeNode(dirEl, children));
   }
 
   $.tree.appendChild(fragment);

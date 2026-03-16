@@ -23,7 +23,7 @@ pub fn write_image<W: Write + Seek>(
         }
     }
 
-    writer.write_string_value("Property", 0x73, 0x1B)?;
+    writer.write_string_value(super::WZ_TYPE_PROPERTY, 0x73, 0x1B)?;
     write_property_list(writer, properties)?;
     writer.string_cache.clear();
 
@@ -141,9 +141,10 @@ fn write_extended_content<W: Write + Seek>(
     writer: &mut WzBinaryWriter<W>,
     prop: &WzProperty,
 ) -> WzResult<()> {
+    use super::{WZ_TYPE_PROPERTY, WZ_TYPE_CANVAS, WZ_TYPE_VECTOR, WZ_TYPE_CONVEX, WZ_TYPE_SOUND, WZ_TYPE_UOL, WZ_TYPE_RAW_DATA, WZ_TYPE_VIDEO};
     match prop {
         WzProperty::SubProperty { properties } => {
-            writer.write_string_value("Property", 0x73, 0x1B)?;
+            writer.write_string_value(WZ_TYPE_PROPERTY, 0x73, 0x1B)?;
             write_property_list(writer, properties)
         }
 
@@ -154,7 +155,7 @@ fn write_extended_content<W: Write + Seek>(
             properties,
             png_data,
         } => {
-            writer.write_string_value("Canvas", 0x73, 0x1B)?;
+            writer.write_string_value(WZ_TYPE_CANVAS, 0x73, 0x1B)?;
             writer.write_u8(0)?; // separator
 
             if properties.is_empty() {
@@ -175,13 +176,13 @@ fn write_extended_content<W: Write + Seek>(
         }
 
         WzProperty::Vector { x, y } => {
-            writer.write_string_value("Shape2D#Vector2D", 0x73, 0x1B)?;
+            writer.write_string_value(WZ_TYPE_VECTOR, 0x73, 0x1B)?;
             writer.write_compressed_int(*x)?;
             writer.write_compressed_int(*y)
         }
 
         WzProperty::Convex { points } => {
-            writer.write_string_value("Shape2D#Convex2D", 0x73, 0x1B)?;
+            writer.write_string_value(WZ_TYPE_CONVEX, 0x73, 0x1B)?;
             writer.write_compressed_int(points.len() as i32)?;
             for point in points {
                 write_extended_content(writer, point)?;
@@ -194,7 +195,7 @@ fn write_extended_content<W: Write + Seek>(
             data,
             header,
         } => {
-            writer.write_string_value("Sound_DX8", 0x73, 0x1B)?;
+            writer.write_string_value(WZ_TYPE_SOUND, 0x73, 0x1B)?;
             writer.write_u8(0)?; // padding
             writer.write_compressed_int(data.len() as i32)?;
             writer.write_compressed_int(*duration_ms)?;
@@ -203,13 +204,13 @@ fn write_extended_content<W: Write + Seek>(
         }
 
         WzProperty::Uol(path) => {
-            writer.write_string_value("UOL", 0x73, 0x1B)?;
+            writer.write_string_value(WZ_TYPE_UOL, 0x73, 0x1B)?;
             writer.write_u8(0)?; // separator
             writer.write_string_value(path, 0x00, 0x01)
         }
 
         WzProperty::RawData { data } => {
-            writer.write_string_value("RawData", 0x73, 0x1B)?;
+            writer.write_string_value(WZ_TYPE_RAW_DATA, 0x73, 0x1B)?;
             writer.write_compressed_int(data.len() as i32)?;
             writer.write_bytes(data)
         }
@@ -223,7 +224,7 @@ fn write_extended_content<W: Write + Seek>(
             let data = video_data.as_ref().ok_or_else(|| {
                 WzError::Custom("Video property requires video_data for writing".into())
             })?;
-            writer.write_string_value("Canvas#Video", 0x73, 0x1B)?;
+            writer.write_string_value(WZ_TYPE_VIDEO, 0x73, 0x1B)?;
             writer.write_u8(0)?; // separator
 
             if properties.is_empty() {

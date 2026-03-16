@@ -35,6 +35,13 @@ function finalizeFileState(data, detectedVersion, versionHash, tree, mode = 'sta
   if (detectedVersion !== $.version.value) $.version.value = detectedVersion;
 }
 
+function updateFileStatus(file, stats, parseStatus) {
+  $.fileName.textContent = file.name;
+  $.fileStats.textContent = stats;
+  $.statusFile.textContent = `File: ${file.name} (${formatBytes(file.size)})`;
+  $.statusParse.textContent = parseStatus;
+}
+
 // ── File type handlers ───────────────────────────────────────────────
 
 function handleStandardFile(file, data, version) {
@@ -51,10 +58,10 @@ function handleStandardFile(file, data, version) {
 
   const versionLabel = version === 'auto' ? ` (detected: ${detectedVersion.toUpperCase()})` : '';
   const counts = countNodes(state.parsedTree);
-  $.fileName.textContent = file.name;
-  $.fileStats.textContent = `${counts.dirs} dirs, ${counts.images} imgs`;
-  $.statusFile.textContent = `File: ${file.name} (${formatBytes(file.size)})`;
-  $.statusParse.textContent = `Parsed in ${elapsed}ms | v${result.version} ${result.is64bit ? '(64-bit)' : ''}${versionLabel} hash=${result.versionHash}`;
+  updateFileStatus(file,
+    `${counts.dirs} dirs, ${counts.images} imgs`,
+    `Parsed in ${elapsed}ms | v${result.version} ${result.is64bit ? '(64-bit)' : ''}${versionLabel} hash=${result.versionHash}`,
+  );
 
   renderTree(state.parsedTree);
 }
@@ -70,10 +77,7 @@ function handleListFile(file, data, version) {
   finalizeFileState(data, detectedVersion, 0, null, 'list');
 
   const versionLabel = version === 'auto' ? ` (detected: ${detectedVersion.toUpperCase()})` : '';
-  $.fileName.textContent = file.name;
-  $.fileStats.textContent = `${entries.length} entries`;
-  $.statusFile.textContent = `File: ${file.name} (${formatBytes(file.size)})`;
-  $.statusParse.textContent = `Parsed in ${elapsed}ms | List.wz${versionLabel}`;
+  updateFileStatus(file, `${entries.length} entries`, `Parsed in ${elapsed}ms | List.wz${versionLabel}`);
 
   renderListEntries(entries);
 }
@@ -89,10 +93,7 @@ function handleHotfixFile(file, data, version) {
   finalizeFileState(data, detectedVersion, 0, null, 'hotfix');
 
   const versionLabel = version === 'auto' ? ` (detected: ${detectedVersion.toUpperCase()})` : '';
-  $.fileName.textContent = file.name;
-  $.fileStats.textContent = `${countProps(properties)} properties`;
-  $.statusFile.textContent = `File: ${file.name} (${formatBytes(file.size)})`;
-  $.statusParse.textContent = `Parsed in ${elapsed}ms | Hotfix Data.wz${versionLabel}`;
+  updateFileStatus(file, `${countProps(properties)} properties`, `Parsed in ${elapsed}ms | Hotfix Data.wz${versionLabel}`);
 
   renderHotfixTree(file.name, properties);
 }
@@ -114,10 +115,7 @@ function handleMsFile(file, data) {
   state.msSalt = parsed.salt || '';
   state.parsedTree = null;
 
-  $.fileName.textContent = file.name;
-  $.fileStats.textContent = `${parsed.entryCount} entries`;
-  $.statusFile.textContent = `File: ${file.name} (${formatBytes(file.size)})`;
-  $.statusParse.textContent = `Parsed in ${elapsed}ms | MS archive, ${parsed.entryCount} entries`;
+  updateFileStatus(file, `${parsed.entryCount} entries`, `Parsed in ${elapsed}ms | MS archive, ${parsed.entryCount} entries`);
 
   renderMsEntries(parsed.entries);
 }
