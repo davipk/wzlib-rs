@@ -45,6 +45,31 @@ header .info {
   border-radius: 4px;
   font-size: 13px;
 }
+.header-btn {
+  padding: 5px 14px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.header-btn:hover { opacity: 0.85; }
+.header-btn:disabled { opacity: 0.4; cursor: default; }
+.header-btn.hidden { display: none; }
+.save-img-btn {
+  padding: 4px 12px;
+  background: var(--border);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-left: 12px;
+}
+.save-img-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.save-img-btn:disabled { opacity: 0.4; cursor: default; }
 
 /* Drop zone */
 #drop-zone {

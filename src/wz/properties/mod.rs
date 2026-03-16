@@ -50,9 +50,12 @@ pub enum WzProperty {
     Video {
         video_type: u8,
         properties: Vec<(String, WzProperty)>,
+        #[serde(default)]
         data_offset: u64,
+        #[serde(default)]
         data_length: u32,
         mcv_header: Option<McvHeader>,
+        video_data: Option<Vec<u8>>,
     },
 }
 
@@ -199,6 +202,7 @@ mod tests {
             data_offset: 0,
             data_length: 0,
             mcv_header: None,
+            video_data: None,
         };
         assert_eq!(prop.children().unwrap().len(), 1);
     }

@@ -43,9 +43,8 @@ pub fn detect_file_type(data: &[u8]) -> WzFileType {
 /// Parses a hotfix Data.wz file (the entire file is a single WzImage, no PKG1 header).
 pub fn parse_hotfix_data_wz(
     data: &[u8],
-    maple_version: WzMapleVersion,
+    iv: [u8; 4],
 ) -> WzResult<Vec<(String, WzProperty)>> {
-    let iv = maple_version.iv();
     let header = WzHeader {
         ident: String::new(),
         file_size: data.len() as u64,
@@ -62,6 +61,10 @@ pub struct WzFile {
     pub version: i16,
     pub version_hash: u32,
     pub maple_version: WzMapleVersion,
+    /// The actual 4-byte IV used for encryption. Stored explicitly so that
+    /// `save()` re-uses the same key that was active during parsing, even
+    /// when the version enum is `Custom` or a hybrid key was detected.
+    pub iv: [u8; 4],
     pub is_64bit: bool,
     pub directory: WzDirectoryEntry,
 }
@@ -72,9 +75,17 @@ impl WzFile {
         maple_version: WzMapleVersion,
         expected_version: Option<i16>,
     ) -> WzResult<Self> {
+        Self::parse_with_iv(data, maple_version, maple_version.iv(), expected_version)
+    }
+
+    pub fn parse_with_iv(
+        data: &[u8],
+        maple_version: WzMapleVersion,
+        iv: [u8; 4],
+        expected_version: Option<i16>,
+    ) -> WzResult<Self> {
         let mut cursor = Cursor::new(data);
         let header = WzHeader::parse(&mut cursor)?;
-        let iv = maple_version.iv();
         let mut reader = WzBinaryReader::new(cursor, iv, header.clone(), 0);
         let is_64bit = check_64bit_client(&mut reader)?;
         reader.seek(header.data_start as u64)?;
@@ -95,6 +106,7 @@ impl WzFile {
                     version: ver,
                     version_hash: hash,
                     maple_version,
+                    iv,
                     is_64bit,
                     directory: dir,
                 });
@@ -109,6 +121,7 @@ impl WzFile {
                     ver as i16,
                     is_64bit,
                     maple_version,
+                    iv,
                 )? {
                     return Ok(result);
                 }
@@ -122,6 +135,7 @@ impl WzFile {
                 ver,
                 is_64bit,
                 maple_version,
+                iv,
             )? {
                 return Ok(result);
             }
@@ -132,6 +146,81 @@ impl WzFile {
         ))
     }
 
+    pub fn save(&mut self) -> WzResult<Vec<u8>> {
+        let mut image_data_buf = Vec::new();
+        self.directory.generate_data(self.iv, &mut image_data_buf)?;
+        self.save_with_image_data(image_data_buf)
+    }
+
+    /// Phases 2–3: compute offsets and write the final WZ file.
+    /// `image_data_buf` must already contain all serialized image data
+    /// and each image's `size`/`checksum` must be set.
+    fn save_with_image_data(&mut self, image_data_buf: Vec<u8>) -> WzResult<Vec<u8>> {
+        let iv = self.iv;
+
+        // Phase 2: Compute offsets
+        let enc_ver_size = if self.is_64bit { 0u32 } else { 2 };
+        let dir_start = self.header.data_start + enc_ver_size;
+        let after_dir = self.directory.get_offsets(dir_start);
+        let total_len = self.directory.get_img_offsets(after_dir);
+
+        // Update file size in header (file_size = data portion size, per MapleLib)
+        self.header.file_size = (total_len - self.header.data_start) as u64;
+
+        // Phase 3: Write into a single buffer so the writer sees correct absolute
+        // positions (required for offset encryption).
+        let mut output = Vec::new();
+        output.try_reserve(total_len as usize).map_err(|_| {
+            WzError::Custom(format!(
+                "Cannot allocate {} bytes for output — file too large for available memory",
+                total_len
+            ))
+        })?;
+        output.resize(total_len as usize, 0);
+        let mut header_cursor = Cursor::new(&mut output[..]);
+        self.header.write(&mut header_cursor)?;
+
+        let mut writer = super::binary_writer::WzBinaryWriter::new(
+            Cursor::new(&mut output[..]),
+            iv,
+            self.header.clone(),
+        );
+        writer.hash = self.version_hash;
+        writer.seek(self.header.data_start as u64)?;
+
+        if !self.is_64bit {
+            let enc_ver = compute_enc_version(self.version_hash) as u16;
+            writer.write_u16(enc_ver)?;
+        }
+
+        self.directory.save_directory(&mut writer)?;
+        writer.string_cache.clear();
+
+        let img_start = after_dir as u64;
+        writer.seek(img_start)?;
+        writer.write_bytes(&image_data_buf)?;
+
+        Ok(output)
+    }
+}
+
+pub fn save_hotfix_data_wz(
+    properties: &[(String, WzProperty)],
+    iv: [u8; 4],
+) -> WzResult<Vec<u8>> {
+    let header = WzHeader {
+        ident: String::new(),
+        file_size: 0,
+        data_start: 0,
+        copyright: String::new(),
+    };
+    let mut writer = super::binary_writer::WzBinaryWriter::new(
+        Cursor::new(Vec::new()),
+        iv,
+        header,
+    );
+    super::image_writer::write_image(&mut writer, properties)?;
+    Ok(writer.writer.into_inner())
 }
 
 fn check_64bit_client<R: Read + Seek>(
@@ -172,6 +261,7 @@ fn try_decode<R: Read + Seek>(
     patch_version: i16,
     is_64bit: bool,
     maple_version: WzMapleVersion,
+    iv: [u8; 4],
 ) -> WzResult<Option<WzFile>> {
     let hash = check_and_get_version_hash(wz_version_header, patch_version);
     if hash == 0 {
@@ -225,6 +315,7 @@ fn try_decode<R: Read + Seek>(
         version: patch_version,
         version_hash: hash,
         maple_version,
+        iv,
         is_64bit,
         directory: dir,
     }))
@@ -321,7 +412,7 @@ mod tests {
         data.extend_from_slice(&encode_ascii_bms("test"));
         data.push(0x00); // Null property type
 
-        let props = parse_hotfix_data_wz(&data, WzMapleVersion::Bms).unwrap();
+        let props = parse_hotfix_data_wz(&data, WzMapleVersion::Bms.iv()).unwrap();
         assert_eq!(props.len(), 1);
         assert_eq!(props[0].0, "test");
         assert!(matches!(props[0].1, WzProperty::Null));
@@ -343,7 +434,7 @@ mod tests {
         data.push(0x02);
         data.extend_from_slice(&42i16.to_le_bytes());
 
-        let props = parse_hotfix_data_wz(&data, WzMapleVersion::Bms).unwrap();
+        let props = parse_hotfix_data_wz(&data, WzMapleVersion::Bms.iv()).unwrap();
         assert_eq!(props.len(), 2);
         assert_eq!(props[0].0, "a");
         assert!(matches!(props[0].1, WzProperty::Null));
@@ -383,5 +474,169 @@ mod tests {
             let hash = check_and_get_version_hash(WZ_VERSION_HEADER_64BIT_START, ver);
             assert_ne!(hash, 0);
         }
+    }
+
+    // ── save_hotfix_data_wz roundtrip ────────────────────────────────
+
+    #[test]
+    fn test_save_hotfix_roundtrip() {
+        let props = vec![
+            ("name".into(), WzProperty::String("mob".into())),
+            ("hp".into(), WzProperty::Int(100)),
+        ];
+        let iv = WzMapleVersion::Bms.iv();
+        let saved = save_hotfix_data_wz(&props, iv).unwrap();
+        let parsed = parse_hotfix_data_wz(&saved, iv).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].0, "name");
+        assert_eq!(parsed[0].1.as_str(), Some("mob"));
+        assert_eq!(parsed[1].0, "hp");
+        assert_eq!(parsed[1].1.as_int(), Some(100));
+    }
+
+    // ── WzFile::save roundtrip ───────────────────────────────────────
+
+    #[test]
+    fn test_wz_file_save_roundtrip() {
+        use crate::wz::directory::{WzDirectoryEntry, WzImageEntry};
+        use crate::wz::types::WzDirectoryType;
+
+        // Build image properties
+        let img_props = vec![
+            ("x".into(), WzProperty::Int(42)),
+            ("y".into(), WzProperty::Short(7)),
+        ];
+
+        let mut dir = WzDirectoryEntry::new(String::new(), WzDirectoryType::Directory as u8);
+        dir.images.push(WzImageEntry {
+            name: "test.img".into(),
+            size: 0,
+            checksum: 0,
+            offset: 0,
+            properties: Some(img_props),
+            iv: None,
+        });
+
+        let version = 83i16;
+        let hash = compute_version_hash(version);
+
+        let mut wz_file = WzFile {
+            header: WzHeader {
+                ident: "PKG1".into(),
+                file_size: 0,
+                data_start: 60,
+                copyright: "Test".into(),
+            },
+            version,
+            version_hash: hash,
+            maple_version: WzMapleVersion::Bms,
+            iv: WzMapleVersion::Bms.iv(),
+            is_64bit: false,
+            directory: dir,
+        };
+
+        let saved = wz_file.save().unwrap();
+
+        // Parse it back
+        let parsed = WzFile::parse(&saved, WzMapleVersion::Bms, Some(83)).unwrap();
+        assert_eq!(parsed.version, 83);
+        assert_eq!(parsed.directory.images.len(), 1);
+        assert_eq!(parsed.directory.images[0].name, "test.img");
+
+        // Parse the image data
+        let img = &parsed.directory.images[0];
+        let iv = WzMapleVersion::Bms.iv();
+        let header = parsed.header.clone();
+        let mut reader = crate::wz::binary_reader::WzBinaryReader::new(
+            Cursor::new(&saved),
+            iv,
+            header,
+            0,
+        );
+        reader.seek(img.offset).unwrap();
+        let props = crate::wz::image::parse_image(&mut reader).unwrap();
+        assert_eq!(props.len(), 2);
+        assert_eq!(props[0].0, "x");
+        assert_eq!(props[0].1.as_int(), Some(42));
+        assert_eq!(props[1].0, "y");
+        assert_eq!(props[1].1.as_int(), Some(7));
+    }
+
+    // ── Hybrid IV preservation ───────────────────────────────────────
+
+    #[test]
+    fn test_hybrid_iv_save_roundtrip() {
+        use crate::wz::directory::{WzDirectoryEntry, WzImageEntry};
+        use crate::wz::types::WzDirectoryType;
+        use crate::crypto::{WZ_GMSIV, WZ_BMSCLASSIC_IV};
+
+        // Image A: uses GMS key (different from directory BMS key)
+        let props_a = vec![("a".into(), WzProperty::Int(1))];
+        // Image B: uses directory key (BMS, iv=None falls back)
+        let props_b = vec![("b".into(), WzProperty::Int(2))];
+
+        let mut dir = WzDirectoryEntry::new(String::new(), WzDirectoryType::Directory as u8);
+        dir.images.push(WzImageEntry {
+            name: "gms.img".into(),
+            size: 0, checksum: 0, offset: 0,
+            properties: Some(props_a),
+            iv: Some(WZ_GMSIV),
+        });
+        dir.images.push(WzImageEntry {
+            name: "bms.img".into(),
+            size: 0, checksum: 0, offset: 0,
+            properties: Some(props_b),
+            iv: None, // falls back to directory IV (BMS)
+        });
+
+        let version = 83i16;
+        let hash = compute_version_hash(version);
+
+        let mut wz_file = WzFile {
+            header: WzHeader {
+                ident: "PKG1".into(),
+                file_size: 0,
+                data_start: 60,
+                copyright: String::new(),
+            },
+            version, version_hash: hash,
+            maple_version: WzMapleVersion::Bms,
+            iv: WZ_BMSCLASSIC_IV,
+            is_64bit: false,
+            directory: dir,
+        };
+
+        let saved = wz_file.save().unwrap();
+        let parsed = WzFile::parse(&saved, WzMapleVersion::Bms, Some(83)).unwrap();
+
+        // Verify both images survived
+        assert_eq!(parsed.directory.images.len(), 2);
+
+        // Image A (GMS-encrypted) should be readable via IV fallback
+        let img_a = &parsed.directory.images[0];
+        let header = parsed.header.clone();
+        let mut reader = crate::wz::binary_reader::WzBinaryReader::new(
+            Cursor::new(&saved), WZ_BMSCLASSIC_IV, header.clone(), 0,
+        );
+        reader.hash = parsed.version_hash;
+        reader.seek(img_a.offset).unwrap();
+        let props = crate::wz::image::parse_image(&mut reader).unwrap();
+        assert_eq!(props[0].0, "a");
+        assert_eq!(props[0].1.as_int(), Some(1));
+        // Confirm the reader switched to GMS key
+        assert_eq!(reader.wz_key.iv(), WZ_GMSIV);
+
+        // Image B (BMS-encrypted) should be readable directly
+        let img_b = &parsed.directory.images[1];
+        let mut reader = crate::wz::binary_reader::WzBinaryReader::new(
+            Cursor::new(&saved), WZ_BMSCLASSIC_IV, header, 0,
+        );
+        reader.hash = parsed.version_hash;
+        reader.seek(img_b.offset).unwrap();
+        let props = crate::wz::image::parse_image(&mut reader).unwrap();
+        assert_eq!(props[0].0, "b");
+        assert_eq!(props[0].1.as_int(), Some(2));
+        // Reader stayed on BMS key
+        assert_eq!(reader.wz_key.iv(), WZ_BMSCLASSIC_IV);
     }
 }

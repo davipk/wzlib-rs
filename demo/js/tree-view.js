@@ -1,5 +1,5 @@
 import { state, $ } from './state.js';
-import { escapeHtml, countProps } from './utils.js';
+import { escapeHtml, countProps, searchEditorHtml, groupByPath } from './utils.js';
 import { openImage, openMsImage, initPropertyView } from './property-view.js';
 
 // ── Standard WZ tree ─────────────────────────────────────────────────
@@ -116,6 +116,7 @@ export function renderListEntries(entries) {
   $.tree.innerHTML = '';
   const fragment = document.createDocumentFragment();
 
+  // List.wz groups by first-level directory (indexOf), not deepest parent
   const groups = new Map();
   for (const entry of entries) {
     const slash = entry.indexOf('/');
@@ -210,20 +211,7 @@ export function renderHotfixTree(fileName, properties) {
       <tr><th>Type</th><td>Hotfix Data.wz</td></tr>
       <tr><th>Properties</th><td>${countProps(properties)}</td></tr>
     </table>
-    <div class="search-editor" id="search-editor">
-      <div class="search-editor-toolbar">
-        <div class="search-input-wrap">
-          <input type="text" id="search-editor-input" placeholder="Search properties... (Ctrl+F)" />
-          <div class="search-toggles">
-            <button class="search-toggle" id="toggle-regex" title="Use Regular Expression (Alt+R)">.*</button>
-            <button class="search-toggle" id="toggle-case" title="Match Case (Alt+C)">Aa</button>
-            <button class="search-toggle" id="toggle-word" title="Match Whole Word (Alt+W)">ab</button>
-          </div>
-        </div>
-        <span class="search-results-count" id="search-results-count"></span>
-      </div>
-      <div class="search-results" id="search-results"></div>
-    </div>
+    ${searchEditorHtml()}
     <div class="prop-tree" id="prop-tree"></div>
   `;
 
@@ -236,13 +224,7 @@ export function renderMsEntries(entries) {
   $.tree.innerHTML = '';
   const fragment = document.createDocumentFragment();
 
-  const groups = new Map();
-  for (const entry of entries) {
-    const slash = entry.name.lastIndexOf('/');
-    const group = slash >= 0 ? entry.name.substring(0, slash) : '(root)';
-    if (!groups.has(group)) groups.set(group, []);
-    groups.get(group).push(entry);
-  }
+  const groups = groupByPath(entries, e => e.name);
 
   for (const [group, groupEntries] of groups) {
     const dirEl = createNodeEl(group, 'dir', 0, groupEntries.length);

@@ -1,6 +1,7 @@
 import init from '../../ts-wrapper/wasm-pkg/wzlib_rs.js';
 import { state, $ } from './state.js';
 import { handleFile } from './file-handlers.js';
+import { saveCurrentFile } from './save.js';
 
 // Side-effect import: registers global Ctrl+F handler and search worker
 import './search.js';
@@ -35,6 +36,9 @@ $.dropZone.addEventListener('drop', (e) => {
   $.dropZone.classList.remove('active');
   if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
 });
+
+// ── Save button ─────────────────────────────────────────────────────
+$.saveBtn.addEventListener('click', () => saveCurrentFile());
 
 // ── Tree filter search ───────────────────────────────────────────────
 $.searchBox.addEventListener('input', () => {

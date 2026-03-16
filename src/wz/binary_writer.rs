@@ -11,7 +11,7 @@ use super::keys::WzKey;
 use crate::crypto::constants::WZ_OFFSET_CONSTANT;
 
 pub struct WzBinaryWriter<W: Write + Seek> {
-    writer: W,
+    pub(crate) writer: W,
     pub wz_key: WzKey,
     pub hash: u32,
     pub header: WzHeader,
@@ -165,6 +165,54 @@ impl<W: Write + Seek> WzBinaryWriter<W> {
         Ok(())
     }
 
+    // ── String caching writes ──────────────────────────────────────────
+
+    /// Property names: `without_offset=0x00, with_offset=0x01`.
+    /// Type strings:   `without_offset=0x73, with_offset=0x1B`.
+    pub fn write_string_value(
+        &mut self,
+        s: &str,
+        without_offset: u8,
+        with_offset: u8,
+    ) -> WzResult<()> {
+        if s.len() > 4 {
+            if let Some(&cached_offset) = self.string_cache.get(s) {
+                self.write_u8(with_offset)?;
+                return self.write_i32(cached_offset as i32);
+            }
+        }
+
+        self.write_u8(without_offset)?;
+        let str_offset = self.position()? as u32;
+        self.write_wz_string(s)?;
+
+        if !self.string_cache.contains_key(s) {
+            self.string_cache.insert(s.to_string(), str_offset);
+        }
+        Ok(())
+    }
+
+    /// `entry_type`: 3 = directory, 4 = image.
+    pub fn write_wz_object_value(&mut self, name: &str, entry_type: u8) -> WzResult<()> {
+        let cache_key = format!("{}_{}", entry_type, name);
+
+        if let Some(&cached_offset) = self.string_cache.get(&cache_key) {
+            self.write_u8(0x02)?; // RetrieveStringFromOffset
+            return self.write_i32(cached_offset as i32);
+        }
+
+        let str_offset = (self.position()? as u32).wrapping_sub(self.header.data_start);
+        self.write_u8(entry_type)?;
+        self.write_wz_string(name)?;
+        self.string_cache.insert(cache_key, str_offset);
+        Ok(())
+    }
+
+    pub fn write_null_terminated_string(&mut self, s: &str) -> WzResult<()> {
+        self.write_bytes(s.as_bytes())?;
+        self.write_u8(0)
+    }
+
     // ── Offset encryption ────────────────────────────────────────────
 
     pub fn write_wz_offset(&mut self, value: u32) -> WzResult<()> {
@@ -178,5 +226,112 @@ impl<W: Write + Seek> WzBinaryWriter<W> {
 
         let write_val = enc ^ (value.wrapping_sub(fstart.wrapping_mul(2)));
         self.write_u32(write_val)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wz::test_utils::{dummy_header, make_reader};
+    use std::io::Cursor;
+
+    fn make_writer() -> WzBinaryWriter<Cursor<Vec<u8>>> {
+        WzBinaryWriter::new(Cursor::new(Vec::new()), [0; 4], dummy_header(0))
+    }
+
+    fn finish_writer(writer: WzBinaryWriter<Cursor<Vec<u8>>>) -> Vec<u8> {
+        writer.writer.into_inner()
+    }
+
+    // ── write_string_value roundtrip ─────────────────────────────────
+
+    #[test]
+    fn test_write_string_value_inline() {
+        let mut writer = make_writer();
+        writer.write_string_value("Property", 0x73, 0x1B).unwrap();
+        let data = finish_writer(writer);
+
+        let mut reader = make_reader(data);
+        // read_string_block at offset 0: type 0x73 → inline string
+        let s = reader.read_string_block(0).unwrap();
+        assert_eq!(s, "Property");
+    }
+
+    #[test]
+    fn test_write_string_value_cached() {
+        let mut writer = make_writer();
+        // First write — inline (0x73)
+        writer.write_string_value("Property", 0x73, 0x1B).unwrap();
+        let first_end = writer.position().unwrap();
+        // Second write — should use cache (0x1B + offset)
+        writer.write_string_value("Property", 0x73, 0x1B).unwrap();
+        let data = finish_writer(writer);
+
+        let mut reader = make_reader(data);
+        // First: inline
+        let s1 = reader.read_string_block(0).unwrap();
+        assert_eq!(s1, "Property");
+        // Second: offset-based
+        reader.seek(first_end).unwrap();
+        let s2 = reader.read_string_block(0).unwrap();
+        assert_eq!(s2, "Property");
+    }
+
+    #[test]
+    fn test_write_string_value_short_string_no_cache() {
+        let mut writer = make_writer();
+        // Short strings (<= 4 bytes) are never cached
+        writer.write_string_value("ab", 0x00, 0x01).unwrap();
+        writer.write_string_value("ab", 0x00, 0x01).unwrap();
+        let data = finish_writer(writer);
+
+        let mut reader = make_reader(data);
+        let s1 = reader.read_string_block(0).unwrap();
+        assert_eq!(s1, "ab");
+        let s2 = reader.read_string_block(0).unwrap();
+        assert_eq!(s2, "ab");
+    }
+
+    // ── write_wz_object_value ────────────────────────────────────────
+
+    #[test]
+    fn test_write_wz_object_value_inline() {
+        let mut writer = make_writer();
+        writer.write_wz_object_value("test.img", 4).unwrap();
+        let data = finish_writer(writer);
+
+        // First byte should be the entry_type (4)
+        assert_eq!(data[0], 4);
+        // Rest is the encrypted WZ string for "test.img"
+    }
+
+    #[test]
+    fn test_write_wz_object_value_cached() {
+        let mut writer = make_writer();
+        writer.write_wz_object_value("test.img", 4).unwrap();
+        let pos_after_first = writer.position().unwrap();
+        writer.write_wz_object_value("test.img", 4).unwrap();
+        let data = finish_writer(writer);
+
+        // Second entry should start with 0x02 (RetrieveStringFromOffset)
+        assert_eq!(data[pos_after_first as usize], 0x02);
+    }
+
+    // ── write_null_terminated_string ─────────────────────────────────
+
+    #[test]
+    fn test_write_null_terminated_string() {
+        let mut writer = make_writer();
+        writer.write_null_terminated_string("hello").unwrap();
+        let data = finish_writer(writer);
+        assert_eq!(&data, &[b'h', b'e', b'l', b'l', b'o', 0]);
+    }
+
+    #[test]
+    fn test_write_null_terminated_string_empty() {
+        let mut writer = make_writer();
+        writer.write_null_terminated_string("").unwrap();
+        let data = finish_writer(writer);
+        assert_eq!(&data, &[0]);
     }
 }

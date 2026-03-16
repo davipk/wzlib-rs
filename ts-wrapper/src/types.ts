@@ -1,5 +1,5 @@
 /** MapleStory client encryption variant. */
-export type WzMapleVersion = 'gms' | 'ems' | 'msea' | 'bms' | 'classic';
+export type WzMapleVersion = 'gms' | 'ems' | 'msea' | 'bms' | 'classic' | 'custom';
 
 /** WZ PNG pixel format ID (matches the Rust `WzPngFormat` enum values). */
 export type WzPngFormat =
@@ -77,6 +77,21 @@ export interface MsEntryInfo {
   name: string;
   size: number;
   index: number;
+  entryKey: number[]; // 16-byte random key
+}
+
+/** Result from parsing a .ms file (includes salt for save roundtrip). */
+export interface MsParsedResult {
+  entryCount: number;
+  salt: string;
+  entries: MsEntryInfo[];
+}
+
+/** Entry data for saving a .ms file. */
+export interface MsSaveEntry {
+  name: string;
+  image_data: number[]; // serialized WZ image bytes
+  entry_key: number[]; // 16-byte random key
 }
 
 /** Functions exported by the wasm-pack generated WASM module. */
@@ -87,13 +102,19 @@ export interface WasmExports {
   mapleCustomDecrypt(data: Uint8Array): void;
   decompressPngData(compressed: Uint8Array, wzKey?: Uint8Array): Uint8Array;
   decodePixels(raw: Uint8Array, width: number, height: number, formatId: number): Uint8Array;
-  parseWzFile(data: Uint8Array, versionName: string, patchVersion?: number): string;
+  parseWzFile(
+    data: Uint8Array,
+    versionName: string,
+    patchVersion?: number,
+    customIv?: Uint8Array,
+  ): string;
   parseWzImage(
     data: Uint8Array,
     versionName: string,
     imgOffset: number,
     imgSize: number,
     versionHash: number,
+    customIv?: Uint8Array,
   ): string;
   decodeWzCanvas(
     data: Uint8Array,
@@ -101,6 +122,7 @@ export interface WasmExports {
     imgOffset: number,
     versionHash: number,
     propPath: string,
+    customIv?: Uint8Array,
   ): Uint8Array;
   extractWzSound(
     data: Uint8Array,
@@ -108,11 +130,12 @@ export interface WasmExports {
     imgOffset: number,
     versionHash: number,
     propPath: string,
+    customIv?: Uint8Array,
   ): Uint8Array;
   detectWzMapleVersion(data: Uint8Array): string;
   detectWzFileType(data: Uint8Array): WzFileType;
-  parseWzListFile(data: Uint8Array, versionName: string): string;
-  parseHotfixDataWz(data: Uint8Array, versionName: string): string;
+  parseWzListFile(data: Uint8Array, versionName: string, customIv?: Uint8Array): string;
+  parseHotfixDataWz(data: Uint8Array, versionName: string, customIv?: Uint8Array): string;
   computeVersionHash(version: number): number;
   parseMsFile(data: Uint8Array, fileName: string): string;
   parseMsImage(data: Uint8Array, fileName: string, entryIndex: number): string;
@@ -134,11 +157,35 @@ export interface WasmExports {
     imgOffset: number,
     versionHash: number,
     propPath: string,
+    customIv?: Uint8Array,
   ): Uint8Array;
   extractMsVideo(
     data: Uint8Array,
     fileName: string,
     entryIndex: number,
     propPath: string,
+  ): Uint8Array;
+  serializeWzImage(propertiesJson: string, versionName: string, customIv?: Uint8Array): Uint8Array;
+  encryptMsEntry(
+    data: Uint8Array,
+    salt: string,
+    entryName: string,
+    entryKey: Uint8Array,
+  ): Uint8Array;
+  saveWzFile(data: Uint8Array, versionName: string, customIv?: Uint8Array): Uint8Array;
+  saveHotfixDataWz(data: Uint8Array, versionName: string, customIv?: Uint8Array): Uint8Array;
+  saveMsFile(data: Uint8Array, fileName: string): Uint8Array;
+  saveWzImage(
+    wzData: Uint8Array,
+    versionName: string,
+    imgOffset: number,
+    versionHash: number,
+    customIv?: Uint8Array,
+  ): Uint8Array;
+  saveMsImage(
+    data: Uint8Array,
+    fileName: string,
+    entryIndex: number,
+    customIv?: Uint8Array,
   ): Uint8Array;
 }

@@ -147,8 +147,6 @@ impl<R: Read + Seek> WzBinaryReader<R> {
     }
 
     fn read_wz_unicode_string(&mut self, indicator: i8) -> WzResult<String> {
-        const MAX_STRING_LEN: usize = 1024 * 1024; // prevent OOM from corrupted data
-
         let length = if indicator == 127 {
             let len = self.read_i32()?;
             if len <= 0 {
@@ -163,7 +161,7 @@ impl<R: Read + Seek> WzBinaryReader<R> {
             return Ok(String::new());
         }
 
-        if length > MAX_STRING_LEN {
+        if length > super::MAX_WZ_STRING_LEN {
             return Err(WzError::Custom(format!(
                 "Unicode string length too large: {}",
                 length
@@ -190,8 +188,6 @@ impl<R: Read + Seek> WzBinaryReader<R> {
     }
 
     fn read_wz_ascii_string(&mut self, indicator: i8) -> WzResult<String> {
-        const MAX_STRING_LEN: usize = 1024 * 1024;
-
         let length = if indicator == -128 {
             let len = self.read_i32()?;
             if len <= 0 {
@@ -206,7 +202,7 @@ impl<R: Read + Seek> WzBinaryReader<R> {
             return Ok(String::new());
         }
 
-        if length > MAX_STRING_LEN {
+        if length > super::MAX_WZ_STRING_LEN {
             return Err(WzError::Custom(format!(
                 "ASCII string length too large: {}",
                 length
@@ -271,62 +267,7 @@ impl<R: Read + Seek> WzBinaryReader<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
-
-    fn make_reader(data: Vec<u8>) -> WzBinaryReader<Cursor<Vec<u8>>> {
-        let header = WzHeader {
-            ident: "PKG1".to_string(),
-            file_size: data.len() as u64,
-            data_start: 0,
-            copyright: String::new(),
-        };
-        WzBinaryReader::new(Cursor::new(data), [0; 4], header, 0)
-    }
-
-    fn make_reader_with_header(
-        data: Vec<u8>,
-        data_start: u32,
-        file_size: u64,
-    ) -> WzBinaryReader<Cursor<Vec<u8>>> {
-        let header = WzHeader {
-            ident: "PKG1".to_string(),
-            file_size,
-            data_start,
-            copyright: String::new(),
-        };
-        WzBinaryReader::new(Cursor::new(data), [0; 4], header, 0)
-    }
-
-    /// Encode an ASCII string as WZ would store it with BMS zero-key IV.
-    /// Returns bytes: [indicator_byte, ...encrypted_bytes]
-    fn encode_wz_ascii(s: &str) -> Vec<u8> {
-        let len = s.len();
-        assert!(len > 0 && len < 128);
-        let indicator = -(len as i8);
-        let mut out = vec![indicator as u8];
-        let mut mask: u8 = 0xAA;
-        for b in s.bytes() {
-            out.push(b ^ mask); // key[i] = 0 for BMS IV
-            mask = mask.wrapping_add(1);
-        }
-        out
-    }
-
-    /// Encode a Unicode string as WZ would store it with BMS zero-key IV.
-    /// Returns bytes: [indicator_byte, ...encrypted_u16_le_pairs]
-    fn encode_wz_unicode(s: &str) -> Vec<u8> {
-        let chars: Vec<u16> = s.encode_utf16().collect();
-        let len = chars.len();
-        assert!(len > 0 && len < 127);
-        let mut out = vec![len as u8]; // positive indicator = unicode
-        let mut mask: u16 = 0xAAAA;
-        for ch in &chars {
-            let encrypted = ch ^ mask; // key_word = 0 for BMS IV
-            out.extend_from_slice(&encrypted.to_le_bytes());
-            mask = mask.wrapping_add(1);
-        }
-        out
-    }
+    use crate::wz::test_utils::*;
 
     // ── Compressed int (existing) ──────────────────────────────────
 

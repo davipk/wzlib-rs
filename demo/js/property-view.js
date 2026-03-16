@@ -1,8 +1,9 @@
 import { parseWzImage, parseMsImage } from '../../ts-wrapper/wasm-pkg/wzlib_rs.js';
 import { state, $, propChildrenData, childContainerMap, propPathMap, resetPropertyState, imgCache, msImgCache } from './state.js';
-import { escapeHtml, formatBytes, countProps, formatPropValue } from './utils.js';
+import { escapeHtml, formatBytes, countProps, formatPropValue, searchEditorHtml } from './utils.js';
 import { loadCanvasPreview, loadSoundPlayer, loadVideoDownload, getCanvasAnimFrames, createAnimPlayer } from './media.js';
 import { feedWorkerData, setupSearchEditor } from './search.js';
+import { saveCurrentImage, saveCurrentMsImage } from './save.js';
 
 // ── Property tree rendering ──────────────────────────────────────────
 
@@ -63,32 +64,9 @@ export function renderPropertyLevel(container, props, depth, parentPath) {
     childContainer.className = 'prop-children';
     childContainer.style.display = 'none';
 
-    if (isCanvas) {
-      const canvasHolder = document.createElement('div');
-      canvasHolder.className = 'canvas-loading';
-      canvasHolder.style.setProperty('--pdepth', depth);
-      canvasHolder.textContent = 'Click to load preview...';
-      canvasHolder.dataset.loaded = 'false';
-      childContainer.appendChild(canvasHolder);
-    }
-
-    if (isSound) {
-      const soundHolder = document.createElement('div');
-      soundHolder.className = 'sound-loading';
-      soundHolder.style.setProperty('--pdepth', depth);
-      soundHolder.textContent = 'Click to load player...';
-      soundHolder.dataset.loaded = 'false';
-      childContainer.appendChild(soundHolder);
-    }
-
-    if (isVideo) {
-      const videoHolder = document.createElement('div');
-      videoHolder.className = 'video-loading';
-      videoHolder.style.setProperty('--pdepth', depth);
-      videoHolder.textContent = 'Click to extract video...';
-      videoHolder.dataset.loaded = 'false';
-      childContainer.appendChild(videoHolder);
-    }
+    if (isCanvas) childContainer.appendChild(createMediaHolder('canvas-loading', 'Click to load preview...', depth));
+    if (isSound) childContainer.appendChild(createMediaHolder('sound-loading', 'Click to load player...', depth));
+    if (isVideo) childContainer.appendChild(createMediaHolder('video-loading', 'Click to extract video...', depth));
 
     if (hasChildren) {
       propChildrenData.set(propPath, { children: prop.children, type: prop.type });
@@ -179,24 +157,13 @@ export function expandToPath(targetPath) {
   }
 }
 
-// ── Search editor toolbar HTML (shared by IMG, hotfix, and MS views) ─
-function searchEditorHtml() {
-  return `
-    <div class="search-editor" id="search-editor">
-      <div class="search-editor-toolbar">
-        <div class="search-input-wrap">
-          <input type="text" id="search-editor-input" placeholder="Search properties... (Ctrl+F)" />
-          <div class="search-toggles">
-            <button class="search-toggle" id="toggle-regex" title="Use Regular Expression (Alt+R)">.*</button>
-            <button class="search-toggle" id="toggle-case" title="Match Case (Alt+C)">Aa</button>
-            <button class="search-toggle" id="toggle-word" title="Match Whole Word (Alt+W)">ab</button>
-          </div>
-        </div>
-        <span class="search-results-count" id="search-results-count"></span>
-      </div>
-      <div class="search-results" id="search-results"></div>
-    </div>
-  `;
+function createMediaHolder(className, text, depth) {
+  const holder = document.createElement('div');
+  holder.className = className;
+  holder.style.setProperty('--pdepth', depth);
+  holder.textContent = text;
+  holder.dataset.loaded = 'false';
+  return holder;
 }
 
 // ── IMG opening ──────────────────────────────────────────────────────
@@ -240,22 +207,11 @@ export async function openImage(img) {
 }
 
 function showImageProperties(img, properties) {
-  state.activeAnimControllers.forEach(c => c.destroy());
-  state.activeAnimControllers = [];
-
-  $.detail.innerHTML = `
-    <h2>${escapeHtml(img.name)}</h2>
-    <table class="props">
-      <tr><th>Type</th><td>Image</td></tr>
-      <tr><th>Size</th><td>${formatBytes(img.size)}</td></tr>
-      <tr><th>Offset</th><td>0x${img.offset.toString(16).toUpperCase()}</td></tr>
-      <tr><th>Properties</th><td>${countProps(properties)}</td></tr>
-    </table>
-    ${searchEditorHtml()}
-    <div class="prop-tree" id="prop-tree"></div>
-  `;
-
-  initPropertyView(document.getElementById('prop-tree'), properties, img.offset);
+  showProperties(img.name, properties, `
+    <tr><th>Type</th><td>Image</td></tr>
+    <tr><th>Size</th><td>${formatBytes(img.size)}</td></tr>
+    <tr><th>Offset</th><td>0x${img.offset.toString(16).toUpperCase()}</td></tr>
+  `, () => saveCurrentImage(img.offset, img.name), img.offset);
 }
 
 // ── MS image opening ─────────────────────────────────────────────────
@@ -300,20 +256,31 @@ export async function openMsImage(entry) {
 }
 
 function showMsImageProperties(entry, properties) {
+  showProperties(entry.name, properties, `
+    <tr><th>Type</th><td>MS Entry</td></tr>
+    <tr><th>Size</th><td>${formatBytes(entry.size)}</td></tr>
+    <tr><th>Index</th><td>${entry.index}</td></tr>
+  `, () => saveCurrentMsImage(entry.index, entry.name), entry.index);
+}
+
+function showProperties(name, properties, tableRows, onSave, viewKey) {
   state.activeAnimControllers.forEach(c => c.destroy());
   state.activeAnimControllers = [];
 
   $.detail.innerHTML = `
-    <h2>${escapeHtml(entry.name)}</h2>
+    <h2>${escapeHtml(name)}<button class="save-img-btn" id="save-img-btn" title="Save as standalone Data.wz">Save Image</button></h2>
     <table class="props">
-      <tr><th>Type</th><td>MS Entry</td></tr>
-      <tr><th>Size</th><td>${formatBytes(entry.size)}</td></tr>
-      <tr><th>Index</th><td>${entry.index}</td></tr>
+      ${tableRows}
       <tr><th>Properties</th><td>${countProps(properties)}</td></tr>
     </table>
     ${searchEditorHtml()}
     <div class="prop-tree" id="prop-tree"></div>
   `;
 
-  initPropertyView(document.getElementById('prop-tree'), properties, entry.index);
+  document.getElementById('save-img-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    onSave();
+  });
+
+  initPropertyView(document.getElementById('prop-tree'), properties, viewKey);
 }

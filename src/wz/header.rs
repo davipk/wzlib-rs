@@ -19,6 +19,15 @@ pub struct WzHeader {
 }
 
 impl WzHeader {
+    pub fn dummy(file_size: u64) -> Self {
+        WzHeader {
+            ident: String::new(),
+            file_size,
+            data_start: 0,
+            copyright: String::new(),
+        }
+    }
+
     pub fn parse<R: Read + Seek>(reader: &mut R) -> WzResult<Self> {
         reader.seek(SeekFrom::Start(0))?;
 

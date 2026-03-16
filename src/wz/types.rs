@@ -108,6 +108,14 @@ impl WzPngFormat {
         }
     }
 
+    pub fn format_low(&self) -> i32 {
+        (self.format_id() & 0xFF) as i32
+    }
+
+    pub fn format_high(&self) -> i32 {
+        (self.format_id() >> 8) as i32
+    }
+
     pub fn raw_data_size(&self, width: u32, height: u32) -> usize {
         let pixels = (width * height) as usize;
         let blocks_4x4 = || {

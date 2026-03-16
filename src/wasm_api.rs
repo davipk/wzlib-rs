@@ -7,6 +7,18 @@ use crate::image;
 use crate::wz::properties::WzProperty;
 use crate::wz::types::{WzMapleVersion, WzPngFormat};
 
+// ── Error conversion trait ──────────────────────────────────────────
+
+trait ToJsErr<T> {
+    fn to_js_err(self) -> Result<T, JsError>;
+}
+
+impl<T, E: std::fmt::Display> ToJsErr<T> for Result<T, E> {
+    fn to_js_err(self) -> Result<T, JsError> {
+        self.map_err(|e| JsError::new(&e.to_string()))
+    }
+}
+
 // ── Shared helpers ──────────────────────────────────────────────────
 
 fn parse_maple_version(name: &str) -> Result<WzMapleVersion, JsError> {
@@ -14,12 +26,23 @@ fn parse_maple_version(name: &str) -> Result<WzMapleVersion, JsError> {
         "gms" => Ok(WzMapleVersion::Gms),
         "ems" | "msea" => Ok(WzMapleVersion::Ems),
         "bms" | "classic" => Ok(WzMapleVersion::Bms),
+        "custom" => Ok(WzMapleVersion::Custom),
         _ => Err(JsError::new(&format!("Unknown version: {}", name))),
     }
 }
 
+fn resolve_iv(version_name: &str, custom_iv: Option<Vec<u8>>) -> Result<[u8; 4], JsError> {
+    if let Some(iv_bytes) = custom_iv {
+        if iv_bytes.len() != 4 {
+            return Err(JsError::new("custom_iv must be exactly 4 bytes"));
+        }
+        return Ok([iv_bytes[0], iv_bytes[1], iv_bytes[2], iv_bytes[3]]);
+    }
+    Ok(parse_maple_version(version_name)?.iv())
+}
+
 fn to_json_string(value: &impl serde::Serialize) -> Result<String, JsError> {
-    serde_json::to_string(value).map_err(|e| JsError::new(&e.to_string()))
+    serde_json::to_string(value).to_js_err()
 }
 
 fn children_to_json(props: &[(String, WzProperty)]) -> Vec<serde_json::Value> {
@@ -57,7 +80,7 @@ pub fn maple_custom_decrypt(data: &mut [u8]) {
 #[wasm_bindgen(js_name = "decompressPngData")]
 pub fn decompress_png_data(compressed: &[u8], wz_key: Option<Vec<u8>>) -> Result<Vec<u8>, JsError> {
     image::decompress_png_data(compressed, wz_key.as_deref())
-        .map_err(|e| JsError::new(&e.to_string()))
+        .to_js_err()
 }
 
 #[wasm_bindgen(js_name = "decodePixels")]
@@ -68,12 +91,11 @@ pub fn decode_pixels(
     format_id: u32,
 ) -> Result<Vec<u8>, JsError> {
     let format = WzPngFormat::from_combined(format_id);
-    image::decode_pixels(raw, width, height, format).map_err(|e| JsError::new(&e.to_string()))
+    image::decode_pixels(raw, width, height, format).to_js_err()
 }
 
 // ── File type detection ──────────────────────────────────────────────
 
-/// Returns `"standard"`, `"hotfix"`, or `"list"` based on the file header.
 #[wasm_bindgen(js_name = "detectWzFileType")]
 pub fn detect_wz_file_type(data: &[u8]) -> String {
     match crate::wz::file::detect_file_type(data) {
@@ -90,27 +112,26 @@ pub fn parse_wz_file(
     data: &[u8],
     version_name: &str,
     patch_version: Option<i16>,
+    custom_iv: Option<Vec<u8>>,
 ) -> Result<String, JsError> {
     let maple_version = parse_maple_version(version_name)?;
+    let iv = resolve_iv(version_name, custom_iv)?;
 
-    let wz_file = crate::wz::file::WzFile::parse(data, maple_version, patch_version)
-        .map_err(|e| JsError::new(&e.to_string()))?;
+    let wz_file = crate::wz::file::WzFile::parse_with_iv(data, maple_version, iv, patch_version)
+        .to_js_err()?;
 
-    // Serialize directory tree + metadata to JSON
     let result = serde_json::json!({
         "versionHash": wz_file.version_hash,
         "version": wz_file.version,
         "is64bit": wz_file.is_64bit,
+        "iv": wz_file.iv,
         "directory": wz_file.directory,
     });
 
     to_json_string(&result)
 }
 
-/// Parses image properties from WZ data, handling both standard and hotfix formats.
-/// For hotfix Data.wz (no PKG1 header), `img_offset` and `version_hash` are ignored.
-/// Returns (properties, detected_iv) — the IV may differ from the input if the image
-/// uses a different encryption than the directory (common with JMS/KMS/CMS files).
+// IV may differ from input — some files (JMS/KMS/CMS) encrypt images with a different key than the directory.
 fn parse_image_props(
     wz_data: &[u8],
     iv: [u8; 4],
@@ -127,15 +148,9 @@ fn parse_image_props(
 
     let mut cursor = Cursor::new(wz_data);
     let header = if is_hotfix {
-        WzHeader {
-            ident: String::new(),
-            file_size: wz_data.len() as u64,
-            data_start: 0,
-            copyright: String::new(),
-        }
+        WzHeader::dummy(wz_data.len() as u64)
     } else {
-        WzHeader::parse(&mut cursor)
-            .map_err(|e| JsError::new(&e.to_string()))?
+        WzHeader::parse(&mut cursor).to_js_err()?
     };
 
     let actual_offset = if is_hotfix { 0u64 } else { img_offset as u64 };
@@ -152,10 +167,10 @@ fn parse_image_props(
         reader.hash = version_hash;
     }
     reader.seek(actual_offset)
-        .map_err(|e| JsError::new(&e.to_string()))?;
+        .to_js_err()?;
 
     let props = parse_image(&mut reader)
-        .map_err(|e| JsError::new(&e.to_string()))?;
+        .to_js_err()?;
     let detected_iv = reader.wz_key.iv();
     Ok((props, detected_iv))
 }
@@ -167,30 +182,30 @@ pub fn parse_wz_image(
     img_offset: u32,
     img_size: u32,
     version_hash: u32,
+    custom_iv: Option<Vec<u8>>,
 ) -> Result<String, JsError> {
     let _ = img_size; // reserved for future use; kept for WASM API stability
-    let maple_version = parse_maple_version(version_name)?;
+    let iv = resolve_iv(version_name, custom_iv)?;
 
-    let (properties, _) = parse_image_props(wz_data, maple_version.iv(), img_offset, version_hash)?;
+    let (properties, _) = parse_image_props(wz_data, iv, img_offset, version_hash)?;
     to_json_string(&children_to_json(&properties))
 }
 
 #[wasm_bindgen(js_name = "parseWzListFile")]
-pub fn parse_wz_list_file(data: &[u8], version_name: &str) -> Result<String, JsError> {
-    let maple_version = parse_maple_version(version_name)?;
-
-    let entries = crate::wz::list_file::parse_list_file(data, maple_version)
-        .map_err(|e| JsError::new(&e.to_string()))?;
+pub fn parse_wz_list_file(data: &[u8], version_name: &str, custom_iv: Option<Vec<u8>>) -> Result<String, JsError> {
+    let iv = resolve_iv(version_name, custom_iv)?;
+    let entries = crate::wz::list_file::parse_list_file_with_iv(data, iv)
+        .to_js_err()?;
 
     to_json_string(&entries)
 }
 
 #[wasm_bindgen(js_name = "parseHotfixDataWz")]
-pub fn parse_hotfix_data_wz(data: &[u8], version_name: &str) -> Result<String, JsError> {
-    let maple_version = parse_maple_version(version_name)?;
+pub fn parse_hotfix_data_wz(data: &[u8], version_name: &str, custom_iv: Option<Vec<u8>>) -> Result<String, JsError> {
+    let iv = resolve_iv(version_name, custom_iv)?;
 
-    let properties = crate::wz::file::parse_hotfix_data_wz(data, maple_version)
-        .map_err(|e| JsError::new(&e.to_string()))?;
+    let properties = crate::wz::file::parse_hotfix_data_wz(data, iv)
+        .to_js_err()?;
     to_json_string(&children_to_json(&properties))
 }
 
@@ -306,9 +321,10 @@ pub fn decode_wz_canvas(
     img_offset: u32,
     version_hash: u32,
     prop_path: &str,
+    custom_iv: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, JsError> {
-    let maple_version = parse_maple_version(version_name)?;
-    let (properties, detected_iv) = parse_image_props(wz_data, maple_version.iv(), img_offset, version_hash)?;
+    let iv = resolve_iv(version_name, custom_iv)?;
+    let (properties, detected_iv) = parse_image_props(wz_data, iv, img_offset, version_hash)?;
 
     let canvas = find_and_extract(&properties, prop_path, "Canvas", &|p| matches!(p, WzProperty::Canvas { .. }))?;
     decode_canvas_prop(canvas, &detected_iv)
@@ -363,23 +379,20 @@ pub fn extract_wz_sound(
     img_offset: u32,
     version_hash: u32,
     prop_path: &str,
+    custom_iv: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, JsError> {
-    let maple_version = parse_maple_version(version_name)?;
-    let (properties, _) = parse_image_props(wz_data, maple_version.iv(), img_offset, version_hash)?;
+    let iv = resolve_iv(version_name, custom_iv)?;
+    let (properties, _) = parse_image_props(wz_data, iv, img_offset, version_hash)?;
 
     let sound = find_and_extract(&properties, prop_path, "Sound", &|p| matches!(p, WzProperty::Sound { .. }))?;
     extract_sound_prop(sound)
 }
 
-fn extract_video_data(prop: &WzProperty, source_data: &[u8]) -> Result<Vec<u8>, JsError> {
+fn extract_video_data(prop: &WzProperty) -> Result<Vec<u8>, JsError> {
     match prop {
-        WzProperty::Video { data_offset, data_length, .. } => {
-            let offset = *data_offset as usize;
-            let length = *data_length as usize;
-            if offset + length > source_data.len() {
-                return Err(JsError::new("Video data offset/length exceeds bounds"));
-            }
-            Ok(source_data[offset..offset + length].to_vec())
+        WzProperty::Video { video_data: Some(data), .. } => Ok(data.clone()),
+        WzProperty::Video { video_data: None, .. } => {
+            Err(JsError::new("Video property has no video_data loaded"))
         }
         _ => Err(JsError::new("Property at path is not a Video")),
     }
@@ -392,12 +405,13 @@ pub fn extract_wz_video(
     img_offset: u32,
     version_hash: u32,
     prop_path: &str,
+    custom_iv: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, JsError> {
-    let maple_version = parse_maple_version(version_name)?;
-    let (properties, _) = parse_image_props(wz_data, maple_version.iv(), img_offset, version_hash)?;
+    let iv = resolve_iv(version_name, custom_iv)?;
+    let (properties, _) = parse_image_props(wz_data, iv, img_offset, version_hash)?;
 
     let video = find_and_extract(&properties, prop_path, "Video", &|p| matches!(p, WzProperty::Video { .. }))?;
-    extract_video_data(video, wz_data)
+    extract_video_data(video)
 }
 
 // Heuristic: tries all encryption variants, picks the one with the most printable ASCII names.
@@ -434,7 +448,6 @@ fn aggregate_printable_rate<'a>(names: impl Iterator<Item = &'a str>) -> f64 {
     if total == 0 { 0.0 } else { recognized as f64 / total as f64 }
 }
 
-/// Tries each encryption candidate, picks the one whose parsed output has the most printable names.
 fn detect_best_candidate<T>(
     data: &[u8],
     parse: impl Fn(&[u8], WzMapleVersion) -> Result<T, crate::wz::error::WzError>,
@@ -480,6 +493,7 @@ fn detect_standard_version(data: &[u8]) -> Result<String, JsError> {
         "version": wz_file.version,
         "versionHash": wz_file.version_hash,
         "is64bit": wz_file.is_64bit,
+        "iv": wz_file.iv,
         "directory": wz_file.directory,
     }))
 }
@@ -487,7 +501,7 @@ fn detect_standard_version(data: &[u8]) -> Result<String, JsError> {
 fn detect_hotfix_version(data: &[u8]) -> Result<String, JsError> {
     let (name, props) = detect_best_candidate(
         data,
-        crate::wz::file::parse_hotfix_data_wz,
+        |d, v| crate::wz::file::parse_hotfix_data_wz(d, v.iv()),
         |p| aggregate_printable_rate(p.iter().map(|(n, _)| n.as_str())),
         "hotfix Data.wz",
     )?;
@@ -514,11 +528,10 @@ fn detect_list_version(data: &[u8]) -> Result<String, JsError> {
 
 // ── MS file parsing exports ─────────────────────────────────────────
 
-/// Parse the .ms file header and entry table, returning JSON entry list.
 #[wasm_bindgen(js_name = "parseMsFile")]
 pub fn parse_ms_file(data: &[u8], file_name: &str) -> Result<String, JsError> {
     let parsed = crate::wz::ms_file::parse_ms_file(data, file_name)
-        .map_err(|e| JsError::new(&e.to_string()))?;
+        .to_js_err()?;
 
     let entries: Vec<serde_json::Value> = parsed
         .entries
@@ -529,17 +542,18 @@ pub fn parse_ms_file(data: &[u8], file_name: &str) -> Result<String, JsError> {
                 "name": e.name,
                 "size": e.size,
                 "index": i,
+                "entryKey": e.entry_key,
             })
         })
         .collect();
 
     to_json_string(&serde_json::json!({
         "entryCount": parsed.entries.len(),
+        "salt": parsed.salt,
         "entries": entries,
     }))
 }
 
-/// Decrypt and parse a single .ms entry as a WZ image, returning JSON property tree.
 #[wasm_bindgen(js_name = "parseMsImage")]
 pub fn parse_ms_image(
     data: &[u8],
@@ -583,17 +597,9 @@ pub fn extract_ms_video(
 ) -> Result<Vec<u8>, JsError> {
     let props = parse_ms_image_props(data, file_name, entry_index)?;
     let video = find_and_extract(&props, prop_path, "Video", &|p| matches!(p, WzProperty::Video { .. }))?;
-
-    // Re-decrypt to access video data at the stored offset
-    let parsed = crate::wz::ms_file::parse_ms_file(data, file_name)
-        .map_err(|e| JsError::new(&e.to_string()))?;
-    let decrypted = crate::wz::ms_file::decrypt_entry_data(data, &parsed, entry_index as usize)
-        .map_err(|e| JsError::new(&e.to_string()))?;
-
-    extract_video_data(video, &decrypted)
+    extract_video_data(video)
 }
 
-/// Internal: decrypt a .ms entry and parse it as a WZ image.
 fn parse_ms_image_props(
     data: &[u8],
     file_name: &str,
@@ -605,27 +611,143 @@ fn parse_ms_image_props(
     use crate::wz::image::parse_image;
 
     let parsed = crate::wz::ms_file::parse_ms_file(data, file_name)
-        .map_err(|e| JsError::new(&e.to_string()))?;
+        .to_js_err()?;
 
     let decrypted =
         crate::wz::ms_file::decrypt_entry_data(data, &parsed, entry_index as usize)
-            .map_err(|e| JsError::new(&e.to_string()))?;
+            .to_js_err()?;
 
     let iv = WzMapleVersion::Bms.iv();
-    let header = WzHeader {
-        ident: String::new(),
-        file_size: decrypted.len() as u64,
-        data_start: 0,
-        copyright: String::new(),
-    };
-
     let cursor = Cursor::new(decrypted);
-    let mut reader = WzBinaryReader::new(cursor, iv, header, 0);
+    let mut reader = WzBinaryReader::new(cursor, iv, WzHeader::dummy(0), 0);
 
-    parse_image(&mut reader).map_err(|e| JsError::new(&e.to_string()))
+    parse_image(&mut reader).to_js_err()
 }
 
 #[wasm_bindgen(js_name = "computeVersionHash")]
 pub fn compute_version_hash(version: i16) -> u32 {
     crate::wz::file::compute_version_hash(version)
+}
+
+// ── Save / Serialize exports ─────────────────────────────────────────
+
+#[wasm_bindgen(js_name = "serializeWzImage")]
+pub fn serialize_wz_image(
+    properties_json: &str,
+    version_name: &str,
+    custom_iv: Option<Vec<u8>>,
+) -> Result<Vec<u8>, JsError> {
+    let props: Vec<(String, WzProperty)> =
+        serde_json::from_str(properties_json).to_js_err()?;
+    let iv = resolve_iv(version_name, custom_iv)?;
+    crate::wz::file::save_hotfix_data_wz(&props, iv)
+        .to_js_err()
+}
+
+#[wasm_bindgen(js_name = "encryptMsEntry")]
+pub fn encrypt_ms_entry(
+    data: &[u8],
+    salt: &str,
+    entry_name: &str,
+    entry_key: &[u8],
+) -> Result<Vec<u8>, JsError> {
+    if entry_key.len() != 16 {
+        return Err(JsError::new("entry_key must be exactly 16 bytes"));
+    }
+    let mut key = [0u8; 16];
+    key.copy_from_slice(entry_key);
+    Ok(crate::wz::ms_file::encrypt_entry_data(data, salt, entry_name, &key))
+}
+
+#[wasm_bindgen(js_name = "saveWzFile")]
+pub fn save_wz_file(data: &[u8], version_name: &str, custom_iv: Option<Vec<u8>>) -> Result<Vec<u8>, JsError> {
+    let maple_version = parse_maple_version(version_name)?;
+    let iv = resolve_iv(version_name, custom_iv)?;
+    let mut wz_file = crate::wz::file::WzFile::parse_with_iv(data, maple_version, iv, None)
+        .to_js_err()?;
+
+    load_all_image_properties(data, &mut wz_file.directory, iv, wz_file.version_hash)?;
+    wz_file.save().to_js_err()
+}
+
+#[wasm_bindgen(js_name = "saveHotfixDataWz")]
+pub fn save_hotfix_data_wz(data: &[u8], version_name: &str, custom_iv: Option<Vec<u8>>) -> Result<Vec<u8>, JsError> {
+    let iv = resolve_iv(version_name, custom_iv)?;
+    let properties = crate::wz::file::parse_hotfix_data_wz(data, iv)
+        .to_js_err()?;
+    crate::wz::file::save_hotfix_data_wz(&properties, iv)
+        .to_js_err()
+}
+
+#[wasm_bindgen(js_name = "saveMsFile")]
+pub fn save_ms_file(data: &[u8], file_name: &str) -> Result<Vec<u8>, JsError> {
+    let parsed = crate::wz::ms_file::parse_ms_file(data, file_name)
+        .to_js_err()?;
+
+    let mut entries = Vec::with_capacity(parsed.entries.len());
+    for (i, entry) in parsed.entries.iter().enumerate() {
+        let decrypted = crate::wz::ms_file::decrypt_entry_data(data, &parsed, i)
+            .to_js_err()?;
+        entries.push(crate::wz::ms_file::MsSaveEntry {
+            name: entry.name.clone(),
+            image_data: decrypted,
+            entry_key: entry.entry_key,
+        });
+    }
+
+    crate::wz::ms_file::save_ms_file(file_name, &parsed.salt, &entries)
+        .to_js_err()
+}
+
+fn load_all_image_properties(
+    data: &[u8],
+    dir: &mut crate::wz::directory::WzDirectoryEntry,
+    iv: [u8; 4],
+    version_hash: u32,
+) -> Result<(), JsError> {
+    for img in &mut dir.images {
+        let (props, detected_iv) = parse_image_props(data, iv, img.offset as u32, version_hash)?;
+        img.properties = Some(props);
+        if detected_iv != iv {
+            img.iv = Some(detected_iv);
+        }
+    }
+    for subdir in &mut dir.subdirectories {
+        load_all_image_properties(data, subdir, iv, version_hash)?;
+    }
+    Ok(())
+}
+
+#[wasm_bindgen(js_name = "saveWzImage")]
+pub fn save_wz_image(
+    wz_data: &[u8],
+    version_name: &str,
+    img_offset: u32,
+    version_hash: u32,
+    custom_iv: Option<Vec<u8>>,
+) -> Result<Vec<u8>, JsError> {
+    let iv = resolve_iv(version_name, custom_iv)?;
+    let (properties, _) = parse_image_props(wz_data, iv, img_offset, version_hash)?;
+    crate::wz::file::save_hotfix_data_wz(&properties, iv)
+        .to_js_err()
+}
+
+#[wasm_bindgen(js_name = "saveMsImage")]
+pub fn save_ms_image(
+    data: &[u8],
+    file_name: &str,
+    entry_index: u32,
+    custom_iv: Option<Vec<u8>>,
+) -> Result<Vec<u8>, JsError> {
+    let props = parse_ms_image_props(data, file_name, entry_index)?;
+    let iv = if let Some(ref iv_bytes) = custom_iv {
+        if iv_bytes.len() != 4 {
+            return Err(JsError::new("custom_iv must be exactly 4 bytes"));
+        }
+        [iv_bytes[0], iv_bytes[1], iv_bytes[2], iv_bytes[3]]
+    } else {
+        WzMapleVersion::Bms.iv()
+    };
+    crate::wz::file::save_hotfix_data_wz(&props, iv)
+        .to_js_err()
 }

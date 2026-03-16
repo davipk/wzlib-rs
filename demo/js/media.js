@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { formatBytes } from './utils.js';
+import { formatBytes, decodeCanvasResult } from './utils.js';
 import { dispatchDecodeCanvas, dispatchExtractSound, dispatchExtractVideo } from './wasm-dispatch.js';
 
 // ── Canvas preview ───────────────────────────────────────────────────
@@ -8,11 +8,7 @@ export function loadCanvasPreview(holder, imgOffset, propPath, width, height, de
   setTimeout(() => {
     try {
       const result = dispatchDecodeCanvas(imgOffset, propPath);
-
-      // Result format: [width_le32, height_le32, ...rgba_bytes]
-      const w = result[0] | (result[1] << 8) | (result[2] << 16) | (result[3] << 24);
-      const h = result[4] | (result[5] << 8) | (result[6] << 16) | (result[7] << 24);
-      const rgba = result.slice(8);
+      const { w, h, rgba } = decodeCanvasResult(result);
 
       const cvs = document.createElement('canvas');
       cvs.width = w;
@@ -26,7 +22,6 @@ export function loadCanvasPreview(holder, imgOffset, propPath, width, height, de
       wrapper.style.setProperty('--pdepth', depth);
       wrapper.title = `${w}x${h} — click to toggle size`;
 
-      // Auto-detect small sprites: use pixelated rendering for images <= 200px in both dimensions
       const isSprite = w <= 200 && h <= 200;
       if (isSprite) wrapper.classList.add('pixelated');
 
@@ -273,10 +268,7 @@ export function createAnimPlayer(frames, imgOffset, parentPath, depth) {
     const frame = frames[idx];
     const path = parentPath ? `${parentPath}/${frame.name}` : frame.name;
     const result = dispatchDecodeCanvas(imgOffset, path);
-    const w = result[0] | (result[1] << 8) | (result[2] << 16) | (result[3] << 24);
-    const h = result[4] | (result[5] << 8) | (result[6] << 16) | (result[7] << 24);
-    const rgba = result.slice(8);
-    const data = { w, h, rgba };
+    const data = decodeCanvasResult(result);
     frameCache.set(idx, data);
     return data;
   }

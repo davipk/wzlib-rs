@@ -84,7 +84,7 @@ pub fn parse_property_list<R: Read + Seek>(
     offset: u64,
 ) -> WzResult<Vec<(String, WzProperty)>> {
     let count = reader.read_compressed_int()?;
-    if !(0..=500_000).contains(&count) {
+    if !(0..=super::MAX_PROPERTY_COUNT).contains(&count) {
         return Err(WzError::Custom(format!("Invalid property count: {}", count)));
     }
     let mut properties = Vec::with_capacity(count as usize);
@@ -199,7 +199,7 @@ fn parse_extended_property<R: Read + Seek>(
 
         "Shape2D#Convex2D" => {
             let count = reader.read_compressed_int()?;
-            if !(0..=100_000).contains(&count) {
+            if !(0..=super::MAX_CONVEX_POINTS).contains(&count) {
                 return Err(WzError::Custom(format!("Invalid convex point count: {}", count)));
             }
             let mut points = Vec::with_capacity(count as usize);
@@ -251,15 +251,11 @@ fn parse_extended_property<R: Read + Seek>(
             let video_type = reader.read_u8()?;
             let data_len = reader.read_compressed_int()?;
             let data_offset = reader.position()?;
+            let video_data = reader.read_bytes(data_len as usize)?;
 
-            // Try to parse MCV header from the first bytes without reading the full blob
-            let mcv_header = if data_len >= 36 {
-                let header_bytes = reader.read_bytes(36)?;
-                let parsed = super::mcv::parse_mcv_header(&header_bytes).ok();
-                reader.seek(data_offset + data_len as u64)?;
-                parsed
+            let mcv_header = if video_data.len() >= 36 {
+                super::mcv::parse_mcv_header(&video_data[..36]).ok()
             } else {
-                reader.seek(data_offset + data_len as u64)?;
                 None
             };
 
@@ -269,6 +265,7 @@ fn parse_extended_property<R: Read + Seek>(
                 data_offset,
                 data_length: data_len as u32,
                 mcv_header,
+                video_data: Some(video_data),
             })
         }
 
@@ -394,58 +391,7 @@ fn read_lua_data<R: Read + Seek>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::header::WzHeader;
-    use std::io::Cursor;
-
-    /// Create a WzBinaryReader over raw bytes with BMS zero-key IV.
-    fn make_reader(data: Vec<u8>) -> WzBinaryReader<Cursor<Vec<u8>>> {
-        let header = WzHeader {
-            ident: "PKG1".to_string(),
-            file_size: data.len() as u64,
-            data_start: 0,
-            copyright: String::new(),
-        };
-        WzBinaryReader::new(Cursor::new(data), [0; 4], header, 0)
-    }
-
-    /// Encode an ASCII string as WZ encrypted bytes with BMS zero-key.
-    /// Returns [indicator, ...encrypted_bytes].
-    fn encode_ascii(s: &str) -> Vec<u8> {
-        let len = s.len();
-        assert!(len > 0 && len < 128);
-        let indicator = -(len as i8);
-        let mut out = vec![indicator as u8];
-        let mut mask: u8 = 0xAA;
-        for b in s.bytes() {
-            out.push(b ^ mask);
-            mask = mask.wrapping_add(1);
-        }
-        out
-    }
-
-    /// Build a string block (type 0x73 + inline WZ ASCII string).
-    fn string_block(s: &str) -> Vec<u8> {
-        let mut out = vec![0x73u8]; // inline type
-        out.extend_from_slice(&encode_ascii(s));
-        out
-    }
-
-    /// Build a complete 0x73 "Property" image header (header_byte + "Property" string + u16(0)).
-    fn property_image_header() -> Vec<u8> {
-        let mut out = vec![0x73u8]; // header byte
-        out.extend_from_slice(&encode_ascii("Property"));
-        out.extend_from_slice(&0u16.to_le_bytes()); // val = 0
-        out
-    }
-
-    /// Build a property image with a single property of the given name and raw value bytes.
-    fn build_image_with_property(name: &str, value_bytes: &[u8]) -> Vec<u8> {
-        let mut data = property_image_header();
-        data.push(1); // count = 1 (compressed int)
-        data.extend_from_slice(&string_block(name)); // property name
-        data.extend_from_slice(value_bytes); // type marker + value
-        data
-    }
+    use crate::wz::test_utils::*;
 
     /// Encode an ASCII string with a specific IV's key (for testing IV fallback).
     fn encode_ascii_with_iv(s: &str, iv: [u8; 4]) -> Vec<u8> {
@@ -654,7 +600,7 @@ mod tests {
     fn test_parse_vector_property() {
         // Extended: block_size(u32) + type_byte(0x73) + "Shape2D#Vector2D" string + x + y
         let mut inner = vec![0x73u8]; // inline type name
-        inner.extend_from_slice(&encode_ascii("Shape2D#Vector2D"));
+        inner.extend_from_slice(&encode_wz_ascii("Shape2D#Vector2D"));
         inner.push(10);  // x = 10 (compressed int)
         inner.push(20);  // y = 20 (compressed int)
 
@@ -706,18 +652,6 @@ mod tests {
     }
 
     // ── Canvas property ───────────────────────────────────────────
-
-    /// Build an extended property value: marker 0x09 + block_size + inner bytes.
-    fn build_extended_property(type_name: &str, inner_after_type: &[u8]) -> Vec<u8> {
-        let mut inner = vec![0x73u8]; // inline type name
-        inner.extend_from_slice(&encode_ascii(type_name));
-        inner.extend_from_slice(inner_after_type);
-
-        let mut value = vec![0x09u8];
-        value.extend_from_slice(&(inner.len() as u32).to_le_bytes());
-        value.extend_from_slice(&inner);
-        value
-    }
 
     #[test]
     fn test_parse_canvas_property_no_children() {
@@ -888,7 +822,7 @@ mod tests {
         let mut inner = Vec::new();
         inner.push(0x00); // _skip byte
         inner.push(0x00); // uol_type = 0x00 (inline WZ string)
-        inner.extend_from_slice(&encode_ascii("../stand/0"));
+        inner.extend_from_slice(&encode_wz_ascii("../stand/0"));
 
         let value = build_extended_property("UOL", &inner);
         let data = build_image_with_property("link", &value);
@@ -925,12 +859,12 @@ mod tests {
         inner.push(2); // count = 2 points
         // Point 1: extended Vector
         inner.push(0x73);
-        inner.extend_from_slice(&encode_ascii("Shape2D#Vector2D"));
+        inner.extend_from_slice(&encode_wz_ascii("Shape2D#Vector2D"));
         inner.push(1); // x = 1
         inner.push(2); // y = 2
         // Point 2: extended Vector
         inner.push(0x73);
-        inner.extend_from_slice(&encode_ascii("Shape2D#Vector2D"));
+        inner.extend_from_slice(&encode_wz_ascii("Shape2D#Vector2D"));
         inner.push(3); // x = 3
         inner.push(4); // y = 4
 

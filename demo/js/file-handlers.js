@@ -21,13 +21,16 @@ function parseWithVersion(data, version, parseFn) {
   return { result: JSON.parse(parseFn(data, version)), detectedVersion: version };
 }
 
-function finalizeFileState(data, detectedVersion, versionHash, tree, mode = 'standard') {
+function finalizeFileState(data, detectedVersion, versionHash, tree, mode = 'standard', extra = {}) {
   state.wzData = data;
   state.wzVersionName = detectedVersion;
   state.wzVersionHash = versionHash;
   state.parsedTree = tree;
   state.fileMode = mode;
   state.msFileName = '';
+  state.msSalt = '';
+  state.wzPatchVersion = extra.patchVersion ?? 0;
+  state.wzIs64bit = extra.is64bit ?? false;
   state.currentMsEntryIndex = -1;
   if (detectedVersion !== $.version.value) $.version.value = detectedVersion;
 }
@@ -41,7 +44,10 @@ function handleStandardFile(file, data, version) {
   const { result, detectedVersion } = parseWithVersion(data, version, parseWzFile);
   const elapsed = (performance.now() - t0).toFixed(1);
 
-  finalizeFileState(data, detectedVersion, result.versionHash, result.directory);
+  finalizeFileState(data, detectedVersion, result.versionHash, result.directory, 'standard', {
+    patchVersion: result.version,
+    is64bit: result.is64bit,
+  });
 
   const versionLabel = version === 'auto' ? ` (detected: ${detectedVersion.toUpperCase()})` : '';
   const counts = countNodes(state.parsedTree);
@@ -103,7 +109,9 @@ function handleMsFile(file, data) {
   state.wzVersionName = 'bms';
   state.wzVersionHash = 0;
   state.fileMode = 'ms';
+  state.fileName = file.name;
   state.msFileName = file.name;
+  state.msSalt = parsed.salt || '';
   state.parsedTree = null;
 
   $.fileName.textContent = file.name;
@@ -129,6 +137,7 @@ export async function handleFile(file) {
   $.loadingText.textContent = 'Detecting file type...';
 
   try {
+    state.fileName = file.name;
     const isMsFile = file.name.toLowerCase().endsWith('.ms');
 
     if (isMsFile) {
@@ -147,6 +156,7 @@ export async function handleFile(file) {
 
     $.dropZone.classList.add('hidden');
     $.main.classList.add('visible');
+    $.saveBtn.classList.remove('hidden');
   } catch (e) {
     alert(`Parse error: ${e.message}\n\nTry a different encryption version.`);
     console.error(e);

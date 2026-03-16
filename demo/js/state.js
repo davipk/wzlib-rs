@@ -6,8 +6,12 @@ export const state = {
   wzData: null,           // Uint8Array of the full .wz/.ms file
   wzVersionHash: 0,       // version hash from parsing
   wzVersionName: '',      // "gms", "ems", "bms"
+  wzPatchVersion: 0,      // detected patch version (for save)
+  wzIs64bit: false,       // 64-bit format flag (for save)
   fileMode: 'standard',   // 'standard' | 'hotfix' | 'list' | 'ms'
+  fileName: '',           // original filename
   msFileName: '',         // original .ms filename for key derivation
+  msSalt: '',             // salt from .ms parsing (for save)
   currentMsEntryIndex: -1,
   currentImgOffset: 0,
   activeAnimControllers: [],
@@ -48,4 +52,5 @@ export const $ = {
   statusFile:  document.getElementById('status-file'),
   statusParse: document.getElementById('status-parse'),
   version:     document.getElementById('version-select'),
+  saveBtn:     document.getElementById('save-btn'),
 };

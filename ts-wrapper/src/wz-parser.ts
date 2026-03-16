@@ -1,5 +1,5 @@
 import type {
-  MsEntryInfo,
+  MsParsedResult,
   WasmExports,
   WzDirectoryTree,
   WzFileType,
@@ -31,10 +31,20 @@ export class WzParser {
     return this.wasm.detectWzFileType(data);
   }
 
+  /** Auto-detect the MapleStory encryption variant by trying all candidates. */
+  detectMapleVersion(data: Uint8Array): unknown {
+    return JSON.parse(this.wasm.detectWzMapleVersion(data));
+  }
+
   // ── Standard WZ ───────────────────────────────────────────────────
 
-  parseFile(data: Uint8Array, version: WzMapleVersion, patchVersion?: number): WzNode {
-    const json = this.wasm.parseWzFile(data, version, patchVersion);
+  parseFile(
+    data: Uint8Array,
+    version: WzMapleVersion,
+    patchVersion?: number,
+    customIv?: Uint8Array,
+  ): WzNode {
+    const json = this.wasm.parseWzFile(data, version, patchVersion, customIv);
     const tree: WzDirectoryTree = JSON.parse(json);
     return this.buildTree(tree);
   }
@@ -42,17 +52,60 @@ export class WzParser {
   // ── List.wz ───────────────────────────────────────────────────────
 
   /** Parse a List.wz file, returning the list of .img paths it indexes. */
-  parseListFile(data: Uint8Array, version: WzMapleVersion): string[] {
-    const json = this.wasm.parseWzListFile(data, version);
+  parseListFile(data: Uint8Array, version: WzMapleVersion, customIv?: Uint8Array): string[] {
+    const json = this.wasm.parseWzListFile(data, version, customIv);
     return JSON.parse(json);
   }
 
   // ── Hotfix Data.wz ────────────────────────────────────────────────
 
   /** Parse a hotfix Data.wz file (entire file is a single WzImage). */
-  parseHotfixFile(data: Uint8Array, version: WzMapleVersion): WzPropertyNode[] {
-    const json = this.wasm.parseHotfixDataWz(data, version);
+  parseHotfixFile(
+    data: Uint8Array,
+    version: WzMapleVersion,
+    customIv?: Uint8Array,
+  ): WzPropertyNode[] {
+    const json = this.wasm.parseHotfixDataWz(data, version, customIv);
     return JSON.parse(json);
+  }
+
+  // ── Image parsing ────────────────────────────────────────────────
+
+  /** Parse a WZ image at a given offset, returning its property tree. */
+  parseImage(
+    data: Uint8Array,
+    version: WzMapleVersion,
+    imgOffset: number,
+    imgSize: number,
+    versionHash: number,
+    customIv?: Uint8Array,
+  ): WzPropertyNode[] {
+    const json = this.wasm.parseWzImage(data, version, imgOffset, imgSize, versionHash, customIv);
+    return JSON.parse(json);
+  }
+
+  /** Decode a canvas directly from WZ data at a given image offset + property path. Returns `[width_le32, height_le32, ...rgba]`. */
+  decodeWzCanvas(
+    data: Uint8Array,
+    version: WzMapleVersion,
+    imgOffset: number,
+    versionHash: number,
+    propPath: string,
+    customIv?: Uint8Array,
+  ): Uint8Array {
+    return this.wasm.decodeWzCanvas(data, version, imgOffset, versionHash, propPath, customIv);
+  }
+
+  /** Extract raw sound bytes from WZ data at a given image offset + property path. */
+  extractSound(
+    data: Uint8Array,
+    version: WzMapleVersion,
+    imgOffset: number,
+    versionHash: number,
+    propPath: string,
+    customIv?: Uint8Array,
+  ): Uint8Array {
+    return this.wasm.extractWzSound(data, version, imgOffset, versionHash, propPath, customIv);
   }
 
   // ── Image / pixel decoding ────────────────────────────────────────
@@ -63,22 +116,6 @@ export class WzParser {
 
   decodePixels(raw: Uint8Array, width: number, height: number, format: WzPngFormat): Uint8Array {
     return this.wasm.decodePixels(raw, width, height, format);
-  }
-
-  decodeCanvas(
-    compressedPng: Uint8Array,
-    width: number,
-    height: number,
-    format: WzPngFormat,
-  ): Uint8Array {
-    const raw = this.decompressPng(compressedPng);
-    return this.decodePixels(raw, width, height, format);
-  }
-
-  toImageData(rgba: Uint8Array, width: number, height: number): ImageData {
-    const copy = new Uint8ClampedArray(rgba.length);
-    copy.set(rgba);
-    return new ImageData(copy, width, height);
   }
 
   // ── Key / version utilities ───────────────────────────────────────
@@ -95,13 +132,24 @@ export class WzParser {
     return this.wasm.computeVersionHash(version);
   }
 
+  // ── Crypto utilities ────────────────────────────────────────────
+
+  /** Apply MapleStory custom encryption (in-place). */
+  mapleCustomEncrypt(data: Uint8Array): void {
+    this.wasm.mapleCustomEncrypt(data);
+  }
+
+  /** Apply MapleStory custom decryption (in-place). */
+  mapleCustomDecrypt(data: Uint8Array): void {
+    this.wasm.mapleCustomDecrypt(data);
+  }
+
   // ── MS file (.ms) ──────────────────────────────────────────────────
 
-  /** Parse a .ms file, returning the list of entry metadata. */
-  parseMsFile(data: Uint8Array, fileName: string): MsEntryInfo[] {
+  /** Parse a .ms file, returning entry metadata and salt. */
+  parseMsFile(data: Uint8Array, fileName: string): MsParsedResult {
     const json = this.wasm.parseMsFile(data, fileName);
-    const parsed: { entries: MsEntryInfo[] } = JSON.parse(json);
-    return parsed.entries;
+    return JSON.parse(json);
   }
 
   /** Decrypt and parse a single .ms entry as a WZ image property tree. */
@@ -127,8 +175,9 @@ export class WzParser {
     imgOffset: number,
     versionHash: number,
     propPath: string,
+    customIv?: Uint8Array,
   ): Uint8Array {
-    return this.wasm.extractWzVideo(data, versionName, imgOffset, versionHash, propPath);
+    return this.wasm.extractWzVideo(data, versionName, imgOffset, versionHash, propPath, customIv);
   }
 
   /** Extract raw video bytes from a .ms entry. */
@@ -149,6 +198,63 @@ export class WzParser {
     propPath: string,
   ): Uint8Array {
     return this.wasm.extractMsSound(data, fileName, entryIndex, propPath);
+  }
+
+  // ── Save / Serialize ─────────────────────────────────────────────
+
+  /** Serialize a WZ image property tree to binary format. */
+  serializeImage(
+    properties: WzPropertyNode[],
+    version: WzMapleVersion,
+    customIv?: Uint8Array,
+  ): Uint8Array {
+    return this.wasm.serializeWzImage(JSON.stringify(properties), version, customIv);
+  }
+
+  /** Parse a standard WZ file from raw data and save through the regular flow. */
+  saveFile(data: Uint8Array, version: WzMapleVersion, customIv?: Uint8Array): Uint8Array {
+    return this.wasm.saveWzFile(data, version, customIv);
+  }
+
+  /** Parse a hotfix Data.wz from raw data and save through the regular flow. */
+  saveHotfixFile(data: Uint8Array, version: WzMapleVersion, customIv?: Uint8Array): Uint8Array {
+    return this.wasm.saveHotfixDataWz(data, version, customIv);
+  }
+
+  /** Parse a .ms file from raw data and save through the regular flow. */
+  saveMsFile(data: Uint8Array, fileName: string): Uint8Array {
+    return this.wasm.saveMsFile(data, fileName);
+  }
+
+  /** Encrypt a single .ms entry's image data. */
+  encryptMsEntry(
+    data: Uint8Array,
+    salt: string,
+    entryName: string,
+    entryKey: Uint8Array,
+  ): Uint8Array {
+    return this.wasm.encryptMsEntry(data, salt, entryName, entryKey);
+  }
+
+  /** Save a single WZ image as a standalone Data.wz (hotfix format). */
+  saveImage(
+    wzData: Uint8Array,
+    version: WzMapleVersion,
+    imgOffset: number,
+    versionHash: number,
+    customIv?: Uint8Array,
+  ): Uint8Array {
+    return this.wasm.saveWzImage(wzData, version, imgOffset, versionHash, customIv);
+  }
+
+  /** Save a single .ms entry as a standalone Data.wz (hotfix format). */
+  saveMsImage(
+    data: Uint8Array,
+    fileName: string,
+    entryIndex: number,
+    customIv?: Uint8Array,
+  ): Uint8Array {
+    return this.wasm.saveMsImage(data, fileName, entryIndex, customIv);
   }
 
   // ── Internal ──────────────────────────────────────────────────────

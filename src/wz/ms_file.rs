@@ -124,9 +124,7 @@ fn read_i32_le(buf: &[u8], pos: usize) -> WzResult<i32> {
     ]))
 }
 
-/// Parse the .ms file header and entry table.
-///
-/// `file_name` is the basename (e.g. `"Mob_00000.ms"`); it is lowercased internally.
+// `file_name` is lowercased internally to match C# behavior.
 pub fn parse_ms_file(data: &[u8], file_name: &str) -> WzResult<MsParsedFile> {
     let file_name_lower = file_name.to_lowercase();
 
@@ -293,9 +291,7 @@ pub fn parse_ms_file(data: &[u8], file_name: &str) -> WzResult<MsParsedFile> {
     })
 }
 
-/// Decrypt a single entry's WZ image data from the .ms file.
-///
-/// Returns raw WZ image bytes parseable with `parse_image` using BMS keys (IV `[0,0,0,0]`).
+// Returns raw WZ image bytes using BMS keys (IV `[0,0,0,0]`).
 pub fn decrypt_entry_data(
     data: &[u8],
     file: &MsParsedFile,
@@ -328,6 +324,152 @@ pub fn decrypt_entry_data(
     Snow2::new(&img_key, &[], false).process(&mut buffer[..double_len]);
 
     Ok(buffer)
+}
+
+// ── Writing ─────────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+pub struct MsSaveEntry {
+    pub name: String,
+    pub image_data: Vec<u8>,
+    pub entry_key: [u8; 16],
+}
+
+/// Reverse of `decrypt_entry_data()`.
+pub fn encrypt_entry_data(
+    data: &[u8],
+    salt: &str,
+    entry_name: &str,
+    entry_key: &[u8; 16],
+) -> Vec<u8> {
+    let img_key = derive_img_key(salt, entry_name, entry_key);
+
+    let aligned_size = (data.len() + BLOCK_ALIGNMENT - 1) & !(BLOCK_ALIGNMENT - 1);
+    let mut buffer = vec![0u8; aligned_size];
+    buffer[..data.len()].copy_from_slice(data);
+
+    // Encrypt: inner first 1024 bytes, then outer entire buffer
+    let double_len = buffer.len().min(DOUBLE_ENCRYPT_BYTES);
+    Snow2::new(&img_key, &[], true).process(&mut buffer[..double_len]);
+    Snow2::new(&img_key, &[], true).process(&mut buffer);
+
+    buffer
+}
+
+fn write_i32_le(buf: &mut Vec<u8>, val: i32) {
+    buf.extend_from_slice(&val.to_le_bytes());
+}
+
+pub fn save_ms_file(
+    file_name: &str,
+    salt: &str,
+    entries: &[MsSaveEntry],
+) -> WzResult<Vec<u8>> {
+    let file_name_lower = file_name.to_lowercase();
+    let mut output = Vec::new();
+
+    let char_sum: u32 = file_name_lower.bytes().map(|b| b as u32).sum();
+    let rand_byte_count = (char_sum % 312 + 30) as usize;
+
+    // Deterministic "random" bytes (seeded from filename for reproducibility)
+    let mut rand_bytes = vec![0u8; rand_byte_count];
+    for (i, b) in rand_bytes.iter_mut().enumerate() {
+        *b = ((i as u32).wrapping_mul(0x41C64E6D).wrapping_add(0x3039) >> 16) as u8;
+    }
+    output.extend_from_slice(&rand_bytes);
+
+    let salt_len = salt.len();
+    let hashed_salt_len = (salt_len as u8 ^ rand_bytes[0]) as i32;
+    write_i32_le(&mut output, hashed_salt_len);
+
+    // Salt as UTF-16LE pairs: low byte = salt_char XOR rand_byte, high byte = 0
+    let mut salt_u16_values = Vec::with_capacity(salt_len);
+    for i in 0..salt_len {
+        let lo = salt.as_bytes()[i] ^ rand_bytes[i];
+        output.push(lo);
+        output.push(0);
+        salt_u16_values.push(u16::from_le_bytes([lo, 0]));
+    }
+
+    let file_name_with_salt = format!("{}{}", file_name_lower, salt);
+
+    let salt_u16_sum: i32 = salt_u16_values.iter().map(|&v| v as i32).sum();
+    let hash = hashed_salt_len + SUPPORTED_VERSION as i32 + entries.len() as i32 + salt_u16_sum;
+
+    let mut header_buf = [0u8; 12];
+    header_buf[0..4].copy_from_slice(&hash.to_le_bytes());
+    header_buf[4] = SUPPORTED_VERSION;
+    header_buf[5..9].copy_from_slice(&(entries.len() as i32).to_le_bytes());
+
+    let header_key = derive_snow_key(&file_name_with_salt, false);
+    Snow2::new(&header_key, &[], true).process(&mut header_buf);
+    // Only write the 9 meaningful bytes (not the 3 padding bytes)
+    output.extend_from_slice(&header_buf[..9]);
+
+    let pad_amount = {
+        let s: u32 = file_name_lower.bytes().map(|b| b as u32 * 3).sum();
+        (s % 212 + 33) as usize
+    };
+    output.extend(std::iter::repeat(0u8).take(pad_amount));
+
+    let mut entry_buf = Vec::new();
+    let mut block_offset: usize = 0;
+
+    for entry in entries {
+        let name_u16: Vec<u16> = entry.name.encode_utf16().collect();
+        write_i32_le(&mut entry_buf, name_u16.len() as i32);
+        for &ch in &name_u16 {
+            entry_buf.extend_from_slice(&ch.to_le_bytes());
+        }
+
+        let aligned_size = (entry.image_data.len() + BLOCK_ALIGNMENT - 1) & !(BLOCK_ALIGNMENT - 1);
+        let ek_sum: i32 = entry.entry_key.iter().map(|&b| b as i32).sum();
+        let flags: i32 = 0;
+        let unk1: i32 = 0;
+        let unk2: i32 = 0;
+        let checksum = flags + (block_offset / BLOCK_ALIGNMENT) as i32
+            + entry.image_data.len() as i32
+            + aligned_size as i32
+            + unk1
+            + ek_sum;
+
+        write_i32_le(&mut entry_buf, checksum);
+        write_i32_le(&mut entry_buf, flags);
+        write_i32_le(&mut entry_buf, (block_offset / BLOCK_ALIGNMENT) as i32); // start block index
+        write_i32_le(&mut entry_buf, entry.image_data.len() as i32);
+        write_i32_le(&mut entry_buf, aligned_size as i32);
+        write_i32_le(&mut entry_buf, unk1);
+        write_i32_le(&mut entry_buf, unk2);
+        entry_buf.extend_from_slice(&entry.entry_key);
+
+        block_offset += aligned_size;
+    }
+
+    // Encrypt the entry table
+    let entry_key = derive_snow_key(&file_name_with_salt, true);
+    // Pad to 4-byte boundary for Snow2
+    while entry_buf.len() % 4 != 0 {
+        entry_buf.push(0);
+    }
+    Snow2::new(&entry_key, &[], true).process(&mut entry_buf);
+    output.extend_from_slice(&entry_buf);
+
+    let remainder = output.len() % BLOCK_ALIGNMENT;
+    if remainder != 0 {
+        output.extend(std::iter::repeat(0u8).take(BLOCK_ALIGNMENT - remainder));
+    }
+
+    for entry in entries {
+        let encrypted = encrypt_entry_data(
+            &entry.image_data,
+            salt,
+            &entry.name,
+            &entry.entry_key,
+        );
+        output.extend_from_slice(&encrypted);
+    }
+
+    Ok(output)
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -394,5 +536,88 @@ mod tests {
     fn test_parse_ms_file_too_small() {
         let result = parse_ms_file(&[0u8; 10], "test.ms");
         assert!(result.is_err());
+    }
+
+    // ── encrypt/decrypt roundtrip ────────────────────────────────
+
+    #[test]
+    fn test_encrypt_decrypt_entry_roundtrip() {
+        let original = vec![0x73u8; 2048]; // fake WZ image data
+        let salt = "testsalt";
+        let name = "Mob/test.img";
+        let entry_key = [0x42u8; 16];
+
+        let encrypted = encrypt_entry_data(&original, salt, name, &entry_key);
+        assert_ne!(&encrypted[..original.len()], &original[..]);
+
+        // Decrypt
+        let img_key = derive_img_key(salt, name, &entry_key);
+        let mut decrypted = encrypted;
+        Snow2::new(&img_key, &[], false).process(&mut decrypted);
+        let double_len = decrypted.len().min(DOUBLE_ENCRYPT_BYTES);
+        Snow2::new(&img_key, &[], false).process(&mut decrypted[..double_len]);
+
+        assert_eq!(&decrypted[..original.len()], &original[..]);
+    }
+
+    // ── save/parse roundtrip ─────────────────────────────────────
+
+    #[test]
+    fn test_save_parse_ms_roundtrip() {
+        let file_name = "test_data.ms";
+        let salt = "abc";
+        let image_data = vec![0x73u8, 0xAB, 0xCD, 0xEF, 0x01, 0x02, 0x03, 0x04];
+        let entry_key = [0x11u8; 16];
+
+        let entries = vec![MsSaveEntry {
+            name: "Mob/0100.img".into(),
+            image_data: image_data.clone(),
+            entry_key,
+        }];
+
+        let saved = save_ms_file(file_name, salt, &entries).unwrap();
+        let parsed = parse_ms_file(&saved, file_name).unwrap();
+
+        assert_eq!(parsed.entries.len(), 1);
+        assert_eq!(parsed.entries[0].name, "Mob/0100.img");
+        assert_eq!(parsed.entries[0].size, image_data.len());
+
+        // Decrypt and verify the image data
+        let decrypted = decrypt_entry_data(&saved, &parsed, 0).unwrap();
+        assert_eq!(&decrypted[..image_data.len()], &image_data[..]);
+    }
+
+    #[test]
+    fn test_save_parse_ms_multiple_entries() {
+        let file_name = "multi.ms";
+        let salt = "xyz";
+
+        let entries = vec![
+            MsSaveEntry {
+                name: "Map/town.img".into(),
+                image_data: vec![0x73; 500],
+                entry_key: [0x22; 16],
+            },
+            MsSaveEntry {
+                name: "Npc/shop.img".into(),
+                image_data: vec![0x73; 1500],
+                entry_key: [0x33; 16],
+            },
+        ];
+
+        let saved = save_ms_file(file_name, salt, &entries).unwrap();
+        let parsed = parse_ms_file(&saved, file_name).unwrap();
+
+        assert_eq!(parsed.entries.len(), 2);
+        assert_eq!(parsed.entries[0].name, "Map/town.img");
+        assert_eq!(parsed.entries[1].name, "Npc/shop.img");
+
+        for i in 0..2 {
+            let decrypted = decrypt_entry_data(&saved, &parsed, i).unwrap();
+            assert_eq!(
+                &decrypted[..entries[i].image_data.len()],
+                &entries[i].image_data[..]
+            );
+        }
     }
 }

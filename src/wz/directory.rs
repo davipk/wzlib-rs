@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::binary_reader::WzBinaryReader;
 use super::error::{WzError, WzResult};
+use super::properties::WzProperty;
 use super::types::WzDirectoryType;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,6 +17,8 @@ pub struct WzDirectoryEntry {
     pub checksum: i32,
     pub offset: u64,
     pub entry_type: u8,
+    #[serde(skip)]
+    pub offset_size: u32,
     pub subdirectories: Vec<WzDirectoryEntry>,
     pub images: Vec<WzImageEntry>,
 }
@@ -26,6 +29,13 @@ pub struct WzImageEntry {
     pub size: i32,
     pub checksum: i32,
     pub offset: u64,
+    #[serde(skip)]
+    pub properties: Option<Vec<(String, WzProperty)>>,
+    /// Per-image IV detected during parsing (hybrid WZ files may encrypt
+    /// different images with different keys). Falls back to the directory
+    /// IV when `None`.
+    #[serde(skip)]
+    pub iv: Option<[u8; 4]>,
 }
 
 impl WzDirectoryEntry {
@@ -36,6 +46,7 @@ impl WzDirectoryEntry {
             checksum: 0,
             offset: 0,
             entry_type,
+            offset_size: 0,
             subdirectories: Vec::new(),
             images: Vec::new(),
         }
@@ -47,7 +58,7 @@ impl WzDirectoryEntry {
         let entry_count = reader.read_compressed_int()?;
 
         // Sanity check — garbled data from wrong version hash will produce huge counts
-        if !(0..=100_000).contains(&entry_count) {
+        if !(0..=super::MAX_DIRECTORY_ENTRIES).contains(&entry_count) {
             return Err(WzError::Custom(format!(
                 "Invalid entry count {} — likely wrong version hash",
                 entry_count
@@ -130,6 +141,8 @@ impl WzDirectoryEntry {
                     size: entry.size,
                     checksum: entry.checksum,
                     offset: entry.offset,
+                    properties: None,
+                    iv: None,
                 };
                 dir.images.push(img);
             }
@@ -152,48 +165,145 @@ impl WzDirectoryEntry {
 
         Ok(dir)
     }
+
+    // ── Writing ──────────────────────────────────────────────────────
+
+    // Phase 1 of three-phase save (see WzFile::save)
+    pub fn generate_data(
+        &mut self,
+        iv: [u8; 4],
+        image_data_buf: &mut Vec<u8>,
+    ) -> WzResult<()> {
+        for img in &mut self.images {
+            if let Some(props) = img.properties.take() {
+                let image_iv = img.iv.unwrap_or(iv);
+                let header = super::header::WzHeader::dummy(0);
+                let mut img_writer =
+                    super::binary_writer::WzBinaryWriter::new(std::io::Cursor::new(Vec::new()), image_iv, header);
+                super::image_writer::write_image(&mut img_writer, &props)?;
+                drop(props); // free parsed data before appending serialized
+                let serialized = img_writer.writer.into_inner();
+
+                img.checksum = compute_image_checksum(&serialized);
+                img.size = serialized.len() as i32;
+                image_data_buf.extend_from_slice(&serialized);
+            }
+            // If properties is None, image retains its existing size/checksum
+        }
+
+        for subdir in &mut self.subdirectories {
+            subdir.generate_data(iv, image_data_buf)?;
+        }
+
+        self.offset_size = self.measure_entry_table_size();
+
+        Ok(())
+    }
+
+    fn measure_entry_table_size(&self) -> u32 {
+        let entry_count = self.images.len() + self.subdirectories.len();
+        let mut size = compressed_int_size(entry_count as i32);
+
+        for img in &self.images {
+            // type(1) + name_str + compressed_int(size) + compressed_int(checksum) + offset(4)
+            size += 1 + wz_string_size(&img.name) + compressed_int_size(img.size)
+                + compressed_int_size(img.checksum) + 4;
+        }
+        for dir in &self.subdirectories {
+            size += 1 + wz_string_size(&dir.name) + compressed_int_size(dir.size)
+                + compressed_int_size(dir.checksum) + 4;
+        }
+        size as u32
+    }
+
+    // Phase 2a of three-phase save
+    pub fn get_offsets(&mut self, cur_offset: u32) -> u32 {
+        self.offset = cur_offset as u64;
+        let mut next = cur_offset + self.offset_size;
+        for subdir in &mut self.subdirectories {
+            next = subdir.get_offsets(next);
+        }
+        next
+    }
+
+    // Phase 2b of three-phase save
+    pub fn get_img_offsets(&mut self, cur_offset: u32) -> u32 {
+        let mut next = cur_offset;
+        for img in &mut self.images {
+            img.offset = next as u64;
+            next += img.size as u32;
+        }
+        for subdir in &mut self.subdirectories {
+            next = subdir.get_img_offsets(next);
+        }
+        next
+    }
+
+    // Phase 3 of three-phase save
+    pub fn save_directory<W: std::io::Write + std::io::Seek>(
+        &self,
+        writer: &mut super::binary_writer::WzBinaryWriter<W>,
+    ) -> WzResult<()> {
+        let entry_count = self.images.len() + self.subdirectories.len();
+        writer.write_compressed_int(entry_count as i32)?;
+
+        for img in &self.images {
+            writer.write_wz_object_value(&img.name, WzDirectoryType::Image as u8)?;
+            writer.write_compressed_int(img.size)?;
+            writer.write_compressed_int(img.checksum)?;
+            writer.write_wz_offset(img.offset as u32)?;
+        }
+
+        for dir in &self.subdirectories {
+            writer.write_wz_object_value(&dir.name, WzDirectoryType::Directory as u8)?;
+            writer.write_compressed_int(dir.size)?;
+            writer.write_compressed_int(dir.checksum)?;
+            writer.write_wz_offset(dir.offset as u32)?;
+        }
+
+        for subdir in &self.subdirectories {
+            subdir.save_directory(writer)?;
+        }
+
+        Ok(())
+    }
+}
+
+pub fn compute_image_checksum(data: &[u8]) -> i32 {
+    let mut checksum: i32 = 0;
+    for &b in data {
+        checksum = checksum.wrapping_add(b as i32);
+    }
+    checksum
+}
+
+// ── Size estimation helpers ──────────────────────────────────────────
+
+fn compressed_int_size(val: i32) -> usize {
+    if (-127..=127).contains(&val) && val != -128 {
+        1
+    } else {
+        5
+    }
+}
+
+fn wz_string_size(s: &str) -> usize {
+    if s.is_ascii() {
+        let len = s.len();
+        let prefix = if len > 127 { 5 } else { 1 };
+        prefix + len
+    } else {
+        let chars: Vec<u16> = s.encode_utf16().collect();
+        let len = chars.len();
+        let prefix = if len >= 127 { 5 } else { 1 };
+        prefix + len * 2
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::constants::WZ_OFFSET_CONSTANT;
-    use crate::wz::header::WzHeader;
-    use std::io::Cursor;
-
-    fn make_reader(data: Vec<u8>) -> WzBinaryReader<Cursor<Vec<u8>>> {
-        let header = WzHeader {
-            ident: "PKG1".to_string(),
-            file_size: data.len() as u64,
-            data_start: 0,
-            copyright: String::new(),
-        };
-        WzBinaryReader::new(Cursor::new(data), [0; 4], header, 0)
-    }
-
-    /// Encode an ASCII string in WZ format (BMS zero-key IV).
-    fn encode_wz_ascii(s: &str) -> Vec<u8> {
-        let len = s.len();
-        assert!(len > 0 && len < 128);
-        let indicator = -(len as i8);
-        let mut out = vec![indicator as u8];
-        let mut mask: u8 = 0xAA;
-        for b in s.bytes() {
-            out.push(b ^ mask);
-            mask = mask.wrapping_add(1);
-        }
-        out
-    }
-
-    /// Compute the 4 encrypted LE bytes so `read_wz_offset` returns `desired`.
-    /// Assumes data_start=0, hash=0, start_offset=0.
-    fn encode_wz_offset(cur_pos: u32, desired: u32) -> [u8; 4] {
-        let mut v = cur_pos ^ 0xFFFF_FFFF;
-        v = v.wrapping_mul(0);
-        v = v.wrapping_sub(WZ_OFFSET_CONSTANT);
-        v = v.rotate_left(v & 0x1F);
-        (v ^ desired).to_le_bytes()
-    }
+    use crate::wz::test_utils::*;
 
     // ── Constructor ─────────────────────────────────────────────────
 
