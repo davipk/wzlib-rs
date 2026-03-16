@@ -19,6 +19,8 @@ export const state = {
   currentPlayBtn: null,
   currentStopBtn: null,
   modifiedImages: new Set(),  // image offsets that were edited (passthrough all others on save)
+  editableImages: new Map(),  // editKey → { properties, blobs } for images parsed-for-edit
+  nextSyntheticOffset: -1,    // counter for new (added) images
 };
 
 // ── Lazy property tree rendering state ───────────────────────────────

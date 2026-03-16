@@ -33,6 +33,8 @@ function finalizeFileState(data, detectedVersion, versionHash, tree, mode = 'sta
   state.wzIs64bit = extra.is64bit ?? false;
   state.currentMsEntryIndex = -1;
   state.modifiedImages.clear();
+  state.editableImages.clear();
+  state.nextSyntheticOffset = -1;
   if (detectedVersion !== $.version.value) $.version.value = detectedVersion;
 }
 
@@ -116,6 +118,8 @@ function handleMsFile(file, data) {
   state.msSalt = parsed.salt || '';
   state.parsedTree = null;
   state.modifiedImages.clear();
+  state.editableImages.clear();
+  state.nextSyntheticOffset = -1;
 
   updateFileStatus(file, `${parsed.entryCount} entries`, `Parsed in ${elapsed}ms | MS archive, ${parsed.entryCount} entries`);
 

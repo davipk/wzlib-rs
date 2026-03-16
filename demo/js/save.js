@@ -9,50 +9,7 @@ import {
 } from '../../ts-wrapper/wasm-pkg/wzlib_rs.js';
 import { state, $ } from './state.js';
 import { formatBytes } from './utils.js';
-
-// ── Packed binary helpers ────────────────────────────────────────────
-
-function unpackEditResult(packed) {
-  const view = new DataView(packed.buffer, packed.byteOffset, packed.byteLength);
-  let offset = 0;
-
-  const jsonLen = view.getUint32(offset, true);
-  offset += 4;
-  const json = JSON.parse(new TextDecoder().decode(packed.subarray(offset, offset + jsonLen)));
-  offset += jsonLen;
-
-  const blobCount = view.getUint32(offset, true);
-  offset += 4;
-  const blobs = [];
-  for (let i = 0; i < blobCount; i++) {
-    const blobLen = view.getUint32(offset, true);
-    offset += 4;
-    blobs.push(packed.slice(offset, offset + blobLen));
-    offset += blobLen;
-  }
-
-  return { properties: json, blobs };
-}
-
-function packBlobs(blobs) {
-  let totalSize = 4;
-  for (const b of blobs) totalSize += 4 + b.byteLength;
-
-  const buf = new Uint8Array(totalSize);
-  const view = new DataView(buf.buffer);
-  let offset = 0;
-
-  view.setUint32(offset, blobs.length, true);
-  offset += 4;
-  for (const b of blobs) {
-    view.setUint32(offset, b.byteLength, true);
-    offset += 4;
-    buf.set(b, offset);
-    offset += b.byteLength;
-  }
-
-  return buf;
-}
+import { unpackEditResult, packBlobs } from './packed.js';
 
 // Collect images depth-first matching attach_image_data traversal order
 function collectImages(dir) {
@@ -92,21 +49,33 @@ function withProgress(label, fn) {
   });
 }
 
-// ── Build a single image via parse-for-edit + buildWzImage ──────────
+// ── Build a single image, using edit state if available ──────────────
 
 function buildImageFromWz(imgOffset, imgSize) {
+  const editData = state.editableImages.get(String(imgOffset));
+  if (editData) {
+    return buildWzImage(JSON.stringify(editData.properties), packBlobs(editData.blobs), state.wzVersionName);
+  }
   const packed = parseWzImageForEdit(state.wzData, state.wzVersionName, imgOffset, imgSize, state.wzVersionHash);
   const { properties, blobs } = unpackEditResult(packed);
   return buildWzImage(JSON.stringify(properties), packBlobs(blobs), state.wzVersionName);
 }
 
 function buildImageFromHotfix() {
+  const editData = state.editableImages.get('hotfix');
+  if (editData) {
+    return buildWzImage(JSON.stringify(editData.properties), packBlobs(editData.blobs), state.wzVersionName);
+  }
   const packed = parseHotfixForEdit(state.wzData, state.wzVersionName);
   const { properties, blobs } = unpackEditResult(packed);
   return buildWzImage(JSON.stringify(properties), packBlobs(blobs), state.wzVersionName);
 }
 
 function buildImageFromMs(entryIndex) {
+  const editData = state.editableImages.get(`ms:${entryIndex}`);
+  if (editData) {
+    return buildWzImage(JSON.stringify(editData.properties), packBlobs(editData.blobs), 'bms');
+  }
   const packed = parseMsImageForEdit(state.wzData, state.msFileName, entryIndex);
   const { properties, blobs } = unpackEditResult(packed);
   return buildWzImage(JSON.stringify(properties), packBlobs(blobs), 'bms');
@@ -123,8 +92,13 @@ export async function saveCurrentFile() {
         const result = await withProgress('Saving WZ file...', () => {
           const images = collectImages(state.parsedTree);
           const imageBlobs = images.map((img) => {
-            // Unchanged images: pass through original bytes (no parse/serialize round-trip)
-            if (!state.modifiedImages?.has(img.offset)) {
+            // New or modified images: build from edit state
+            const editData = state.editableImages.get(String(img.offset));
+            if (editData) {
+              return buildWzImage(JSON.stringify(editData.properties), packBlobs(editData.blobs), state.wzVersionName);
+            }
+            // Unchanged images with valid offsets: pass through original bytes
+            if (img.offset >= 0 && !state.modifiedImages?.has(img.offset)) {
               return state.wzData.slice(img.offset, img.offset + img.size);
             }
             return buildImageFromWz(img.offset, img.size);

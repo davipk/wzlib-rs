@@ -1,6 +1,17 @@
-import { state, $ } from './state.js';
+import { state, $, imgCache } from './state.js';
 import { escapeHtml, countProps, searchEditorHtml, groupByPath } from './utils.js';
 import { openImage, openMsImage, initPropertyView } from './property-view.js';
+import { isEditing, getEditData, enterEditMode, getEditKey, createEmptyEditData, markModified } from './edit.js';
+
+// ── Drag state ──────────────────────────────────────────────────────
+
+const dragState = { source: null, img: null, dir: null };
+
+function clearDropIndicators() {
+  document.querySelectorAll('.drop-above, .drop-below').forEach(el => {
+    el.classList.remove('drop-above', 'drop-below');
+  });
+}
 
 // ── Standard WZ tree ─────────────────────────────────────────────────
 
@@ -12,8 +23,11 @@ export function renderTree(root) {
     renderDirNode(fragment, dir, 0);
   }
   for (const img of root.images || []) {
-    renderImgNode(fragment, img, 0);
+    renderImgNode(fragment, img, 0, root);
   }
+
+  // "Add Image" button for root
+  fragment.appendChild(createAddImgButton(root, 0));
 
   $.tree.appendChild(fragment);
 }
@@ -33,8 +47,11 @@ function renderDirNode(parent, dir, depth) {
     renderDirNode(children, sub, depth + 1);
   }
   for (const img of dir.images || []) {
-    renderImgNode(children, img, depth + 1);
+    renderImgNode(children, img, depth + 1, dir);
   }
+
+  // "Add Image" button inside this directory
+  children.appendChild(createAddImgButton(dir, depth + 1));
 
   parent.appendChild(children);
 
@@ -44,16 +61,132 @@ function renderDirNode(parent, dir, depth) {
   });
 }
 
-function renderImgNode(parent, img, depth) {
+function renderImgNode(parent, img, depth, dir) {
   const el = createNodeEl(img.name, 'img', depth, 0);
   el.dataset.nodeType = 'img';
   el.dataset.name = img.name;
+
+  // ── Drag-and-drop reordering ────────────────────────────────────
+  el.draggable = true;
+
+  el.addEventListener('dragstart', (e) => {
+    e.stopPropagation();
+    el.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    dragState.source = el;
+    dragState.img = img;
+    dragState.dir = dir;
+  });
+
+  el.addEventListener('dragend', () => {
+    el.classList.remove('dragging');
+    clearDropIndicators();
+    dragState.source = null;
+  });
+
+  el.addEventListener('dragover', (e) => {
+    if (!dragState.source || dragState.source === el || dragState.dir !== dir) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    clearDropIndicators();
+    const rect = el.getBoundingClientRect();
+    el.classList.add(e.clientY < rect.top + rect.height / 2 ? 'drop-above' : 'drop-below');
+  });
+
+  el.addEventListener('dragleave', () => {
+    el.classList.remove('drop-above', 'drop-below');
+  });
+
+  el.addEventListener('drop', (e) => {
+    e.preventDefault();
+    clearDropIndicators();
+    if (!dragState.source || dragState.source === el || dragState.dir !== dir) return;
+
+    const above = e.clientY < el.getBoundingClientRect().top + el.offsetHeight / 2;
+
+    // Update data model
+    const fromIdx = dir.images.indexOf(dragState.img);
+    if (fromIdx < 0) return;
+    dir.images.splice(fromIdx, 1);
+    let toIdx = dir.images.indexOf(img);
+    if (!above) toIdx++;
+    dir.images.splice(toIdx, 0, dragState.img);
+
+    // Update DOM
+    if (above) el.parentNode.insertBefore(dragState.source, el);
+    else el.parentNode.insertBefore(dragState.source, el.nextSibling);
+  });
+
+  // ── Edit buttons ────────────────────────────────────────────────
+  const btns = document.createElement('span');
+  btns.className = 'tree-edit-btns';
+
+  const renameBtn = document.createElement('button');
+  renameBtn.className = 'rename-btn';
+  renameBtn.textContent = '\u270E';
+  renameBtn.title = 'Rename image';
+  renameBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const newName = prompt('Rename image:', img.name);
+    if (!newName || newName === img.name) return;
+    img.name = newName;
+    el.querySelector('.name').textContent = newName;
+    el.dataset.name = newName;
+  });
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'del-btn';
+  delBtn.textContent = '\u00D7';
+  delBtn.title = 'Delete image';
+  delBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!confirm(`Delete image "${img.name}"?`)) return;
+    const idx = dir.images.indexOf(img);
+    if (idx >= 0) {
+      dir.images.splice(idx, 1);
+      el.remove();
+      const key = getEditKey(img.offset);
+      state.editableImages.delete(key);
+      state.modifiedImages.delete(img.offset);
+      imgCache.delete(img.offset);
+    }
+  });
+
+  btns.append(renameBtn, delBtn);
+  el.appendChild(btns);
   parent.appendChild(el);
 
   el.addEventListener('click', () => {
     selectNode(el, { type: 'image', ...img });
     openImage(img);
   });
+}
+
+function createAddImgButton(dir, depth) {
+  const btn = document.createElement('button');
+  btn.className = 'tree-add-img';
+  btn.style.setProperty('--depth', depth);
+  btn.textContent = '+ Add Image';
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const name = prompt('Image name (e.g., "NewImage.img"):');
+    if (!name) return;
+
+    const syntheticOffset = state.nextSyntheticOffset--;
+    const newImg = { name, size: 0, checksum: 0, offset: syntheticOffset };
+    dir.images.push(newImg);
+
+    // Create empty edit data so it can be edited and saved
+    const key = getEditKey(syntheticOffset);
+    createEmptyEditData(key);
+    markModified(syntheticOffset);
+
+    // Insert the new image node before this button
+    const fragment = document.createDocumentFragment();
+    renderImgNode(fragment, newImg, depth, dir);
+    btn.before(fragment);
+  });
+  return btn;
 }
 
 function createNodeEl(name, type, depth, childCount) {
@@ -103,9 +236,9 @@ function showDetail(data) {
         <tr><th>Type</th><td>Directory</td></tr>
         <tr><th>Subdirectories</th><td>${subdirs}</td></tr>
         <tr><th>Images</th><td>${imgs}</td></tr>
-        <tr><th>Size</th><td>${data.size ?? '—'}</td></tr>
-        <tr><th>Checksum</th><td>${data.checksum != null ? '0x' + (data.checksum >>> 0).toString(16).toUpperCase() : '—'}</td></tr>
-        <tr><th>Offset</th><td>${data.offset != null ? '0x' + data.offset.toString(16).toUpperCase() : '—'}</td></tr>
+        <tr><th>Size</th><td>${data.size ?? '\u2014'}</td></tr>
+        <tr><th>Checksum</th><td>${data.checksum != null ? '0x' + (data.checksum >>> 0).toString(16).toUpperCase() : '\u2014'}</td></tr>
+        <tr><th>Offset</th><td>${data.offset != null ? '0x' + data.offset.toString(16).toUpperCase() : '\u2014'}</td></tr>
       </table>
     `;
   } else if (data.type === 'list-entry') {
@@ -130,7 +263,6 @@ export function renderListEntries(entries) {
   $.tree.innerHTML = '';
   const fragment = document.createDocumentFragment();
 
-  // List.wz groups by first-level directory (indexOf), not deepest parent
   const groups = new Map();
   for (const entry of entries) {
     const slash = entry.indexOf('/');
@@ -196,22 +328,52 @@ export function renderHotfixTree(fileName, properties) {
   fragment.appendChild(rootEl);
   $.tree.appendChild(fragment);
 
+  renderHotfixDetail(fileName, properties);
+}
+
+function renderHotfixDetail(fileName, properties, forceEditMode = null) {
   state.activeAnimControllers.forEach(c => c.destroy());
   state.activeAnimControllers = [];
+
+  const hasEditData = isEditing(0);
+  const editActive = forceEditMode !== null ? forceEditMode : hasEditData;
+  const displayProps = hasEditData ? getEditData(0).properties : properties;
 
   $.detailEmpty.style.display = 'none';
   $.detail.style.display = '';
   $.detail.innerHTML = `
-    <h2>${escapeHtml(fileName)}</h2>
+    <h2>
+      ${escapeHtml(fileName)}
+      <button class="edit-img-btn${editActive ? ' active' : ''}" id="edit-img-btn">
+        ${editActive ? 'Done Editing' : 'Edit Properties'}
+      </button>
+    </h2>
     <table class="props">
       <tr><th>Type</th><td>Hotfix Data.wz</td></tr>
-      <tr><th>Properties</th><td>${countProps(properties)}</td></tr>
+      <tr><th>Properties</th><td>${countProps(displayProps)}</td></tr>
     </table>
-    ${searchEditorHtml()}
+    ${editActive ? '' : searchEditorHtml()}
     <div class="prop-tree" id="prop-tree"></div>
   `;
 
-  initPropertyView(document.getElementById('prop-tree'), properties, 0);
+  const editBtn = document.getElementById('edit-img-btn');
+  editBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (editActive) {
+      renderHotfixDetail(fileName, properties, false);
+    } else {
+      try {
+        enterEditMode(0);
+        renderHotfixDetail(fileName, properties, true);
+      } catch (err) {
+        alert(`Failed to enter edit mode: ${err.message}`);
+        console.error('Edit mode error:', err);
+      }
+    }
+  });
+
+  const propTree = document.getElementById('prop-tree');
+  initPropertyView(propTree, displayProps, 0, editActive);
 }
 
 // ── MS entries ───────────────────────────────────────────────────────
