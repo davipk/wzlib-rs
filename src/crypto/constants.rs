@@ -32,6 +32,15 @@ pub const WZ_GMSIV: [u8; 4] = [0x4D, 0x23, 0xC7, 0x2B];       // GMS
 pub const WZ_MSEAIV: [u8; 4] = [0xB9, 0x7D, 0x63, 0xE9];      // MSEA/EMS
 pub const WZ_BMSCLASSIC_IV: [u8; 4] = [0x00, 0x00, 0x00, 0x00]; // BMS/Classic (unencrypted)
 
+/// Trim a 128-byte user key to 32 bytes by sampling indices 0,16,32,...,112.
+pub fn trimmed_key_from(user_key: &[u8; 128]) -> [u8; 32] {
+    let mut key = [0u8; 32];
+    for i in 0..8 {
+        key[i * 4] = user_key[i * 16];
+    }
+    key
+}
+
 pub const WZ_OFFSET_CONSTANT: u32 = 0x581C3F6D;
 
 #[rustfmt::skip]

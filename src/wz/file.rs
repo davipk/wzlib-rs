@@ -45,6 +45,15 @@ pub fn parse_hotfix_data_wz(
     data: &[u8],
     iv: [u8; 4],
 ) -> WzResult<Vec<(String, WzProperty)>> {
+    parse_hotfix_data_wz_with_user_key(data, iv, None)
+}
+
+/// Parses a hotfix Data.wz file with an optional custom user key.
+pub fn parse_hotfix_data_wz_with_user_key(
+    data: &[u8],
+    iv: [u8; 4],
+    user_key: Option<[u8; 128]>,
+) -> WzResult<Vec<(String, WzProperty)>> {
     let header = WzHeader {
         ident: String::new(),
         file_size: data.len() as u64,
@@ -53,6 +62,9 @@ pub fn parse_hotfix_data_wz(
     };
     let cursor = Cursor::new(data);
     let mut reader = WzBinaryReader::new(cursor, iv, header, 0);
+    if let Some(uk) = user_key {
+        reader.wz_key = super::keys::WzKey::with_user_key(iv, uk);
+    }
     parse_image(&mut reader)
 }
 
@@ -65,6 +77,9 @@ pub struct WzFile {
     /// `save()` re-uses the same key that was active during parsing, even
     /// when the version enum is `Custom` or a hybrid key was detected.
     pub iv: [u8; 4],
+    /// Optional custom 128-byte user key for AES key generation.
+    /// When set, this key is used instead of the standard `UserKey`.
+    pub user_key: Option<[u8; 128]>,
     pub is_64bit: bool,
     pub directory: WzDirectoryEntry,
 }
@@ -84,9 +99,22 @@ impl WzFile {
         iv: [u8; 4],
         expected_version: Option<i16>,
     ) -> WzResult<Self> {
+        Self::parse_with_iv_and_user_key(data, maple_version, iv, expected_version, None)
+    }
+
+    pub fn parse_with_iv_and_user_key(
+        data: &[u8],
+        maple_version: WzMapleVersion,
+        iv: [u8; 4],
+        expected_version: Option<i16>,
+        user_key: Option<[u8; 128]>,
+    ) -> WzResult<Self> {
         let mut cursor = Cursor::new(data);
         let header = WzHeader::parse(&mut cursor)?;
         let mut reader = WzBinaryReader::new(cursor, iv, header.clone(), 0);
+        if let Some(uk) = user_key {
+            reader.wz_key = super::keys::WzKey::with_user_key(iv, uk);
+        }
         let is_64bit = check_64bit_client(&mut reader)?;
         reader.seek(header.data_start as u64)?;
 
@@ -107,6 +135,7 @@ impl WzFile {
                     version_hash: hash,
                     maple_version,
                     iv,
+                    user_key,
                     is_64bit,
                     directory: dir,
                 });
@@ -122,6 +151,7 @@ impl WzFile {
                     is_64bit,
                     maple_version,
                     iv,
+                    user_key,
                 )? {
                     return Ok(result);
                 }
@@ -136,6 +166,7 @@ impl WzFile {
                 is_64bit,
                 maple_version,
                 iv,
+                user_key,
             )? {
                 return Ok(result);
             }
@@ -148,7 +179,7 @@ impl WzFile {
 
     pub fn save(&mut self) -> WzResult<Vec<u8>> {
         let mut image_data_buf = Vec::new();
-        self.directory.generate_data(self.iv, &mut image_data_buf)?;
+        self.directory.generate_data(self.iv, self.user_key, &mut image_data_buf)?;
         self.save_with_image_data(&[&image_data_buf])
     }
 
@@ -186,6 +217,9 @@ impl WzFile {
             iv,
             self.header.clone(),
         );
+        if let Some(uk) = self.user_key {
+            writer.wz_key = super::keys::WzKey::with_user_key(iv, uk);
+        }
         writer.hash = self.version_hash;
         writer.seek(self.header.data_start as u64)?;
 
@@ -211,6 +245,15 @@ pub fn save_hotfix_data_wz(
     properties: &[(String, WzProperty)],
     iv: [u8; 4],
 ) -> WzResult<Vec<u8>> {
+    save_hotfix_data_wz_with_user_key(properties, iv, None)
+}
+
+/// Save a hotfix Data.wz file with an optional custom user key.
+pub fn save_hotfix_data_wz_with_user_key(
+    properties: &[(String, WzProperty)],
+    iv: [u8; 4],
+    user_key: Option<[u8; 128]>,
+) -> WzResult<Vec<u8>> {
     let header = WzHeader {
         ident: String::new(),
         file_size: 0,
@@ -222,6 +265,9 @@ pub fn save_hotfix_data_wz(
         iv,
         header,
     );
+    if let Some(uk) = user_key {
+        writer.wz_key = super::keys::WzKey::with_user_key(iv, uk);
+    }
     super::image_writer::write_image(&mut writer, properties)?;
     Ok(writer.writer.into_inner())
 }
@@ -265,6 +311,7 @@ fn try_decode<R: Read + Seek>(
     is_64bit: bool,
     maple_version: WzMapleVersion,
     iv: [u8; 4],
+    user_key: Option<[u8; 128]>,
 ) -> WzResult<Option<WzFile>> {
     let hash = check_and_get_version_hash(wz_version_header, patch_version);
     if hash == 0 {
@@ -319,6 +366,7 @@ fn try_decode<R: Read + Seek>(
         version_hash: hash,
         maple_version,
         iv,
+        user_key,
         is_64bit,
         directory: dir,
     }))
@@ -534,6 +582,7 @@ mod tests {
             version_hash: hash,
             maple_version: WzMapleVersion::Bms,
             iv: WzMapleVersion::Bms.iv(),
+            user_key: None,
             is_64bit: false,
             directory: dir,
         };
@@ -604,6 +653,7 @@ mod tests {
             version, version_hash: hash,
             maple_version: WzMapleVersion::Bms,
             iv: WzMapleVersion::Bms.iv(),
+            user_key: None,
             is_64bit: false,
             directory: dir,
         };
@@ -685,6 +735,7 @@ mod tests {
             version, version_hash: hash,
             maple_version: WzMapleVersion::Bms,
             iv: WZ_BMSCLASSIC_IV,
+            user_key: None,
             is_64bit: false,
             directory: dir,
         };

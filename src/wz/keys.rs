@@ -7,6 +7,7 @@ use crate::crypto::aes_encryption::generate_wz_key;
 
 pub struct WzKey {
     iv: [u8; 4],
+    user_key: Option<[u8; 128]>,
     keys: Vec<u8>,
 }
 
@@ -14,13 +15,23 @@ impl WzKey {
     pub fn new(iv: [u8; 4]) -> Self {
         WzKey {
             iv,
+            user_key: None,
+            keys: Vec::new(),
+        }
+    }
+
+    /// Create a `WzKey` with a custom 128-byte user key for AES key generation.
+    pub fn with_user_key(iv: [u8; 4], user_key: [u8; 128]) -> Self {
+        WzKey {
+            iv,
+            user_key: Some(user_key),
             keys: Vec::new(),
         }
     }
 
     pub fn ensure_size(&mut self, size: usize) {
         if self.keys.len() < size {
-            self.keys = generate_wz_key(&self.iv, size);
+            self.keys = generate_wz_key(&self.iv, size, self.user_key.as_ref());
         }
     }
 

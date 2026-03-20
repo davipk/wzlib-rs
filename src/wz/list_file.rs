@@ -16,8 +16,19 @@ pub fn parse_list_file(data: &[u8], maple_version: WzMapleVersion) -> WzResult<V
 }
 
 pub fn parse_list_file_with_iv(data: &[u8], iv: [u8; 4]) -> WzResult<Vec<String>> {
+    parse_list_file_with_iv_and_user_key(data, iv, None)
+}
+
+pub fn parse_list_file_with_iv_and_user_key(
+    data: &[u8],
+    iv: [u8; 4],
+    user_key: Option<[u8; 128]>,
+) -> WzResult<Vec<String>> {
     let mut cursor = Cursor::new(data);
-    let mut wz_key = WzKey::new(iv);
+    let mut wz_key = match user_key {
+        Some(uk) => WzKey::with_user_key(iv, uk),
+        None => WzKey::new(iv),
+    };
     let mut entries = Vec::new();
     let data_len = data.len() as u64;
 

@@ -5,7 +5,7 @@
 use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes256;
 
-use super::constants::trimmed_user_key;
+use super::constants::{trimmed_user_key, trimmed_key_from};
 
 fn expand_iv(iv: &[u8; 4]) -> [u8; 16] {
     let mut block = [0u8; 16];
@@ -17,13 +17,19 @@ fn expand_iv(iv: &[u8; 4]) -> [u8; 16] {
 
 // Key generation from `WzMutableKey`: repeatedly AES-ECB encrypts blocks.
 // Block 0 = IV repeated 4x, Block N = previous encrypted block.
-pub fn generate_wz_key(iv: &[u8; 4], size: usize) -> Vec<u8> {
+//
+// When `user_key` is provided, it is used as the AES-256 key material
+// (trimmed from 128 bytes to 32). Otherwise the standard `UserKey` is used.
+pub fn generate_wz_key(iv: &[u8; 4], size: usize, user_key: Option<&[u8; 128]>) -> Vec<u8> {
     // Zero IV means no encryption
     if iv == &[0u8; 4] {
         return vec![0u8; size];
     }
 
-    let aes_key = trimmed_user_key();
+    let aes_key = match user_key {
+        Some(uk) => trimmed_key_from(uk),
+        None => trimmed_user_key(),
+    };
     let cipher = Aes256::new((&aes_key).into());
 
     // Round up to next 16-byte boundary, then to 4096
@@ -60,13 +66,13 @@ mod tests {
 
     #[test]
     fn test_zero_iv_produces_zero_keys() {
-        let keys = generate_wz_key(&WZ_BMSCLASSIC_IV, 256);
+        let keys = generate_wz_key(&WZ_BMSCLASSIC_IV, 256, None);
         assert!(keys.iter().all(|&b| b == 0));
     }
 
     #[test]
     fn test_gms_iv_produces_nonzero_keys() {
-        let keys = generate_wz_key(&WZ_GMSIV, 256);
+        let keys = generate_wz_key(&WZ_GMSIV, 256, None);
         assert!(!keys.iter().all(|&b| b == 0));
         assert_eq!(keys.len(), 256);
     }
@@ -87,8 +93,8 @@ mod tests {
     #[test]
     fn test_gms_key_deterministic_snapshot() {
         // GMS key generation must produce identical output across runs
-        let key1 = generate_wz_key(&WZ_GMSIV, 32);
-        let key2 = generate_wz_key(&WZ_GMSIV, 32);
+        let key1 = generate_wz_key(&WZ_GMSIV, 32, None);
+        let key2 = generate_wz_key(&WZ_GMSIV, 32, None);
         assert_eq!(key1, key2);
         assert_eq!(key1.len(), 32);
         // First 16 bytes must be non-zero (encrypted IV block)
@@ -97,17 +103,17 @@ mod tests {
 
     #[test]
     fn test_ems_key_differs_from_gms() {
-        let gms = generate_wz_key(&WZ_GMSIV, 32);
-        let ems = generate_wz_key(&crate::crypto::WZ_MSEAIV, 32);
+        let gms = generate_wz_key(&WZ_GMSIV, 32, None);
+        let ems = generate_wz_key(&crate::crypto::WZ_MSEAIV, 32, None);
         assert_ne!(gms, ems);
         assert!(ems[..16].iter().any(|&b| b != 0));
     }
 
     #[test]
     fn test_generate_wz_key_size_respected() {
-        let key = generate_wz_key(&WZ_GMSIV, 100);
+        let key = generate_wz_key(&WZ_GMSIV, 100, None);
         assert_eq!(key.len(), 100);
-        let key = generate_wz_key(&WZ_GMSIV, 1);
+        let key = generate_wz_key(&WZ_GMSIV, 1, None);
         assert_eq!(key.len(), 1);
     }
 }

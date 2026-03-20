@@ -209,8 +209,17 @@ fn write_extended_content<W: Write + Seek>(
             writer.write_string_value(path, 0x00, 0x01)
         }
 
-        WzProperty::RawData { data } => {
+        WzProperty::RawData { raw_type, properties, data } => {
             writer.write_string_value(WZ_TYPE_RAW_DATA, 0x73, 0x1B)?;
+            writer.write_u8(*raw_type)?;
+            if *raw_type == 1 {
+                if properties.is_empty() {
+                    writer.write_u8(0)?;
+                } else {
+                    writer.write_u8(1)?;
+                    write_property_list(writer, properties)?;
+                }
+            }
             writer.write_compressed_int(data.len() as i32)?;
             writer.write_bytes(data)
         }
@@ -486,6 +495,76 @@ mod tests {
         match &props[0].1 {
             WzProperty::Lua(data) => assert_eq!(data, &lua_data),
             other => panic!("Expected Lua, got {:?}", other),
+        }
+    }
+
+    // ── RawData ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_roundtrip_rawdata_type0() {
+        let raw = vec![0xAA, 0xBB, 0xCC, 0xDD];
+        let props = write_then_read(vec![(
+            "rd".into(),
+            WzProperty::RawData {
+                raw_type: 0,
+                properties: vec![],
+                data: raw.clone(),
+            },
+        )]);
+        match &props[0].1 {
+            WzProperty::RawData { raw_type, properties, data } => {
+                assert_eq!(*raw_type, 0);
+                assert!(properties.is_empty());
+                assert_eq!(data, &raw);
+            }
+            other => panic!("Expected RawData, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_rawdata_type1_no_props() {
+        let raw = vec![0x01, 0x02, 0x03];
+        let props = write_then_read(vec![(
+            "rd".into(),
+            WzProperty::RawData {
+                raw_type: 1,
+                properties: vec![],
+                data: raw.clone(),
+            },
+        )]);
+        match &props[0].1 {
+            WzProperty::RawData { raw_type, properties, data } => {
+                assert_eq!(*raw_type, 1);
+                assert!(properties.is_empty());
+                assert_eq!(data, &raw);
+            }
+            other => panic!("Expected RawData, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_rawdata_type1_with_props() {
+        let raw = vec![0xDE, 0xAD];
+        let props = write_then_read(vec![(
+            "rd".into(),
+            WzProperty::RawData {
+                raw_type: 1,
+                properties: vec![
+                    ("w".into(), WzProperty::Int(100)),
+                    ("h".into(), WzProperty::Int(200)),
+                ],
+                data: raw.clone(),
+            },
+        )]);
+        match &props[0].1 {
+            WzProperty::RawData { raw_type, properties, data } => {
+                assert_eq!(*raw_type, 1);
+                assert_eq!(properties.len(), 2);
+                assert_eq!(properties[0].1.as_int(), Some(100));
+                assert_eq!(properties[1].1.as_int(), Some(200));
+                assert_eq!(data, &raw);
+            }
+            other => panic!("Expected RawData, got {:?}", other),
         }
     }
 

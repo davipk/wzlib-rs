@@ -174,6 +174,7 @@ impl WzDirectoryEntry {
     pub fn generate_data(
         &mut self,
         iv: [u8; 4],
+        user_key: Option<[u8; 128]>,
         image_data_buf: &mut Vec<u8>,
     ) -> WzResult<()> {
         for img in &mut self.images {
@@ -182,6 +183,9 @@ impl WzDirectoryEntry {
                 let header = super::header::WzHeader::dummy(0);
                 let mut img_writer =
                     super::binary_writer::WzBinaryWriter::new(std::io::Cursor::new(Vec::new()), image_iv, header);
+                if let Some(uk) = user_key {
+                    img_writer.wz_key = super::keys::WzKey::with_user_key(image_iv, uk);
+                }
                 super::image_writer::write_image(&mut img_writer, &props)?;
                 drop(props); // free parsed data before appending serialized
                 let serialized = img_writer.writer.into_inner();
@@ -194,7 +198,7 @@ impl WzDirectoryEntry {
         }
 
         for subdir in &mut self.subdirectories {
-            subdir.generate_data(iv, image_data_buf)?;
+            subdir.generate_data(iv, user_key, image_data_buf)?;
         }
 
         Ok(())

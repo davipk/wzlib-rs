@@ -44,6 +44,8 @@ pub enum WzProperty {
     Lua(Vec<u8>),
 
     RawData {
+        raw_type: u8,
+        properties: Vec<(String, WzProperty)>,
         data: Vec<u8>,
     },
 
@@ -91,6 +93,7 @@ impl WzProperty {
             WzProperty::Canvas { properties, .. } => Some(properties),
             WzProperty::Convex { points } => Some(points),
             WzProperty::Video { properties, .. } => Some(properties),
+            WzProperty::RawData { properties, .. } if !properties.is_empty() => Some(properties),
             _ => None,
         }
     }

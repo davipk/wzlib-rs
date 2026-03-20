@@ -232,17 +232,21 @@ fn parse_extended_property<R: Read + Seek>(
         }
 
         WZ_TYPE_RAW_DATA => {
-            let type_byte = reader.read_u8()?;
-            if type_byte == 1 {
+            let raw_type = reader.read_u8()?;
+            let properties = if raw_type == 1 {
                 let has_props = reader.read_u8()?;
                 if has_props == 1 {
                     let _padding = reader.read_u16()?;
-                    let _properties = parse_property_list(reader, offset)?;
+                    parse_property_list(reader, offset)?
+                } else {
+                    Vec::new()
                 }
-            }
+            } else {
+                Vec::new()
+            };
             let len = reader.read_compressed_int()? as usize;
             let data = reader.read_bytes(len)?;
-            Ok(WzProperty::RawData { data })
+            Ok(WzProperty::RawData { raw_type, properties, data })
         }
 
         WZ_TYPE_VIDEO => {

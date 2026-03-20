@@ -120,8 +120,12 @@ fn prop_to_json(
             }
             obj
         }
-        WzProperty::RawData { data, .. } => {
-            let mut obj = json!({ "name": name, "type": "RawData" });
+        WzProperty::RawData { raw_type, properties, data } => {
+            let children = children_to_json_inner(properties, blobs.as_deref_mut());
+            let mut obj = json!({ "name": name, "type": "RawData", "rawDataType": raw_type });
+            if !children.is_empty() {
+                obj["children"] = json!(children);
+            }
             if let Some(blobs) = blobs {
                 obj["blobIndex"] = json!(blobs.len());
                 blobs.push(data.clone());
@@ -215,7 +219,7 @@ fn find_property<'a>(
 fn decode_canvas(prop: &WzProperty, iv: &[u8; 4]) -> Result<Vec<u8>, JsError> {
     match prop {
         WzProperty::Canvas { width, height, format, png_data, .. } => {
-            let wz_key = crypto::aes_encryption::generate_wz_key(iv, 0x10000);
+            let wz_key = crypto::aes_encryption::generate_wz_key(iv, 0x10000, None);
             let raw = image::decompress_png_data(png_data, Some(&wz_key))
                 .map_err(|e| JsError::new(&format!("Decompress failed: {}", e)))?;
             let rgba = image::decode_pixels(&raw, *width as u32, *height as u32, *format)
@@ -288,7 +292,7 @@ pub fn generate_wz_key(iv: &[u8], size: usize) -> Result<Vec<u8>, JsError> {
         return Err(JsError::new("IV must be exactly 4 bytes"));
     }
     let iv_arr: [u8; 4] = [iv[0], iv[1], iv[2], iv[3]];
-    Ok(crypto::aes_encryption::generate_wz_key(&iv_arr, size))
+    Ok(crypto::aes_encryption::generate_wz_key(&iv_arr, size, None))
 }
 
 #[wasm_bindgen(js_name = "getVersionIv")]
@@ -870,7 +874,11 @@ fn json_node_to_property(
             }
         }
         "Lua" => WzProperty::Lua(get_blob(node, blobs, "Lua")?.to_vec()),
-        "RawData" => WzProperty::RawData { data: get_blob(node, blobs, "RawData")?.to_vec() },
+        "RawData" => WzProperty::RawData {
+            raw_type: node["rawDataType"].as_u64().unwrap_or(0) as u8,
+            properties: parse_children(node, blobs)?,
+            data: get_blob(node, blobs, "RawData")?.to_vec(),
+        },
         "Video" => {
             let video_data = node["blobIndex"].as_u64()
                 .map(|_| get_blob(node, blobs, "Video").map(|b| b.to_vec()))
@@ -989,6 +997,7 @@ pub fn build_wz_file(
         version_hash: hash,
         maple_version,
         iv,
+        user_key: None,
         is_64bit,
         directory,
     };
