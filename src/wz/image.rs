@@ -204,8 +204,8 @@ fn parse_extended_property<R: Read + Seek>(
                 return Err(WzError::Custom(format!("Invalid convex point count: {}", count)));
             }
             let mut points = Vec::with_capacity(count as usize);
-            for _ in 0..count {
-                points.push(parse_extended_property(reader, offset)?);
+            for i in 0..count {
+                points.push((i.to_string(), parse_extended_property(reader, offset)?));
             }
             Ok(WzProperty::Convex { points })
         }
@@ -876,8 +876,8 @@ mod tests {
 
         if let WzProperty::Convex { points } = &props[0].1 {
             assert_eq!(points.len(), 2);
-            assert!(matches!(points[0], WzProperty::Vector { x: 1, y: 2 }));
-            assert!(matches!(points[1], WzProperty::Vector { x: 3, y: 4 }));
+            assert!(matches!(points[0].1, WzProperty::Vector { x: 1, y: 2 }));
+            assert!(matches!(points[1].1, WzProperty::Vector { x: 3, y: 4 }));
         } else {
             panic!("Expected Convex");
         }

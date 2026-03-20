@@ -96,8 +96,7 @@ fn prop_to_json(
         WzProperty::Convex { points } => {
             let pts: Vec<serde_json::Value> = points
                 .iter()
-                .enumerate()
-                .map(|(i, p)| prop_to_json(&i.to_string(), p, blobs.as_deref_mut()))
+                .map(|(n, p)| prop_to_json(n, p, blobs.as_deref_mut()))
                 .collect();
             json!({ "name": name, "type": "Convex", "children": pts })
         }
@@ -855,7 +854,8 @@ fn json_node_to_property(
         "Convex" => {
             let points = node["children"].as_array()
                 .map(|arr| arr.iter()
-                    .map(|n| json_node_to_property(n, blobs).map(|(_, p)| p))
+                    .enumerate()
+                    .map(|(i, n)| json_node_to_property(n, blobs).map(|(_, p)| (i.to_string(), p)))
                     .collect::<Result<Vec<_>, _>>())
                 .transpose()?
                 .unwrap_or_default();

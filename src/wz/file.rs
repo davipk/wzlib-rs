@@ -294,8 +294,8 @@ fn try_decode<R: Read + Seek>(
         let saved_pos = reader.position()?;
         reader.seek(img.offset)?;
         match reader.read_u8() {
-            // 0x73 = inline Property string, 0x1B = offset-based
-            Ok(0x73) | Ok(0x1B) => {
+            // 0x73 = inline Property string, 0x1B = offset-based, 0x01 = .lua image
+            Ok(0x73) | Ok(0x1B) | Ok(0x01) => {
                 reader.seek(saved_pos)?;
             }
             _ => {

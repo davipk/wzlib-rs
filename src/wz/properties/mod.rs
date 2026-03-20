@@ -30,7 +30,7 @@ pub enum WzProperty {
     Vector { x: i32, y: i32 },
 
     Convex {
-        points: Vec<WzProperty>,
+        points: Vec<(String, WzProperty)>,
     },
 
     Sound {
@@ -89,6 +89,7 @@ impl WzProperty {
         match self {
             WzProperty::SubProperty { properties, .. } => Some(properties),
             WzProperty::Canvas { properties, .. } => Some(properties),
+            WzProperty::Convex { points } => Some(points),
             WzProperty::Video { properties, .. } => Some(properties),
             _ => None,
         }

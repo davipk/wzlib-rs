@@ -184,7 +184,7 @@ fn write_extended_content<W: Write + Seek>(
         WzProperty::Convex { points } => {
             writer.write_string_value(WZ_TYPE_CONVEX, 0x73, 0x1B)?;
             writer.write_compressed_int(points.len() as i32)?;
-            for point in points {
+            for (_, point) in points {
                 write_extended_content(writer, point)?;
             }
             Ok(())
@@ -417,15 +417,15 @@ mod tests {
     fn test_roundtrip_convex() {
         let convex = WzProperty::Convex {
             points: vec![
-                WzProperty::Vector { x: 0, y: 0 },
-                WzProperty::Vector { x: 10, y: 20 },
+                ("0".into(), WzProperty::Vector { x: 0, y: 0 }),
+                ("1".into(), WzProperty::Vector { x: 10, y: 20 }),
             ],
         };
         let props = write_then_read(vec![("cx".into(), convex)]);
         match &props[0].1 {
             WzProperty::Convex { points } => {
                 assert_eq!(points.len(), 2);
-                match &points[1] {
+                match &points[1].1 {
                     WzProperty::Vector { x, y } => {
                         assert_eq!(*x, 10);
                         assert_eq!(*y, 20);
