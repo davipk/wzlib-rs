@@ -1,4 +1,5 @@
 pub mod aes_encryption;
+pub mod chacha20;
 pub mod constants;
 pub mod crc32;
 pub mod custom_encryption;

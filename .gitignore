@@ -19,5 +19,8 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 
+# Test fixtures
+test-fixtures/generated
+
 # Agent
 .claude/settings.local.json

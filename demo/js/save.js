@@ -3,6 +3,7 @@ import {
   parseHotfixForEdit,
   parseMsImageForEdit,
   parseMsFile,
+  decryptMsEntry,
   buildWzImage,
   buildWzFile,
   buildMsFile,
@@ -71,10 +72,14 @@ function buildImageFromHotfix() {
   return buildWzImage(JSON.stringify(properties), packBlobs(blobs), state.wzVersionName);
 }
 
-function buildImageFromMs(entryIndex) {
+function buildImageFromMs(entryIndex, entryName) {
   const editData = state.editableImages.get(`ms:${entryIndex}`);
   if (editData) {
     return buildWzImage(JSON.stringify(editData.properties), packBlobs(editData.blobs), 'bms');
+  }
+  // Non-.img entries (e.g. .txt files) are raw data, not WZ images
+  if (!entryName.toLowerCase().endsWith('.img')) {
+    return decryptMsEntry(state.wzData, state.msFileName, entryIndex);
   }
   const packed = parseMsImageForEdit(state.wzData, state.msFileName, entryIndex);
   const { properties, blobs } = unpackEditResult(packed);
@@ -120,13 +125,19 @@ export async function saveCurrentFile() {
         break;
       }
       case 'ms': {
-        const result = await withProgress('Saving MS file (building all entries)...', () => {
+        // MS format derives encryption keys from the filename — saved file must
+        // use the same filename it was built with, otherwise it can't be reopened.
+        const result = await withProgress('Saving MS file as v1 (building all entries)...', () => {
           const parsed = JSON.parse(parseMsFile(state.wzData, state.msFileName));
-          const entryDefs = parsed.entries.map((e) => ({ name: e.name, entryKey: e.entryKey }));
-          const imageBlobs = parsed.entries.map((_, i) => buildImageFromMs(i));
+          const entryDefs = parsed.entries.map((e) => ({
+            name: e.name,
+            entryKey: e.entryKey,
+            originalSize: state.editableImages.has(`ms:${e.index}`) ? undefined : e.size,
+          }));
+          const imageBlobs = parsed.entries.map((e, i) => buildImageFromMs(i, e.name));
           return buildMsFile(state.msFileName, state.msSalt, JSON.stringify(entryDefs), packBlobs(imageBlobs));
         });
-        downloadBlob(result, state.fileName.replace(/\.ms$/i, '_saved.ms'));
+        downloadBlob(result, state.msFileName);
         break;
       }
       case 'list':
@@ -162,7 +173,7 @@ export async function saveCurrentMsImage(entryIndex, entryName) {
 
   try {
     const result = await withProgress(`Saving MS entry ${entryName}...`, () =>
-      buildImageFromMs(entryIndex),
+      buildImageFromMs(entryIndex, entryName),
     );
     const shortName = entryName.includes('/') ? entryName.split('/').pop() : entryName;
     downloadBlob(result, shortName);

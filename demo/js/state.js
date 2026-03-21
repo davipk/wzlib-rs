@@ -12,6 +12,7 @@ export const state = {
   fileName: '',           // original filename
   msFileName: '',         // original .ms filename for key derivation
   msSalt: '',             // salt from .ms parsing (for save)
+  msVersion: 0,           // 1 = Snow2 (v1), 2 = ChaCha20 (v2)
   currentMsEntryIndex: -1,
   currentImgOffset: 0,
   activeAnimControllers: [],

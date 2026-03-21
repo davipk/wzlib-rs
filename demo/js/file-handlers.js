@@ -29,6 +29,7 @@ function finalizeFileState(data, detectedVersion, versionHash, tree, mode = 'sta
   state.fileMode = mode;
   state.msFileName = '';
   state.msSalt = '';
+  state.msVersion = 0;
   state.wzPatchVersion = extra.patchVersion ?? 0;
   state.wzIs64bit = extra.is64bit ?? false;
   state.currentMsEntryIndex = -1;
@@ -116,12 +117,14 @@ function handleMsFile(file, data) {
   state.fileName = file.name;
   state.msFileName = file.name;
   state.msSalt = parsed.salt || '';
+  state.msVersion = parsed.version || 1;
   state.parsedTree = null;
   state.modifiedImages.clear();
   state.editableImages.clear();
   state.nextSyntheticOffset = -1;
 
-  updateFileStatus(file, `${parsed.entryCount} entries`, `Parsed in ${elapsed}ms | MS archive, ${parsed.entryCount} entries`);
+  const versionLabel = state.msVersion === 2 ? 'v2 (ChaCha20)' : 'v1 (Snow2)';
+  updateFileStatus(file, `${parsed.entryCount} entries`, `Parsed in ${elapsed}ms | MS ${versionLabel}, ${parsed.entryCount} entries`);
 
   renderMsEntries(parsed.entries);
 }

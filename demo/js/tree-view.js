@@ -418,7 +418,7 @@ export function renderMsEntries(entries) {
   $.detail.innerHTML = `
     <h2>${escapeHtml(state.msFileName)}</h2>
     <table class="props">
-      <tr><th>Type</th><td>MS Archive (Snow2 encrypted)</td></tr>
+      <tr><th>Type</th><td>MS Archive (${state.msVersion === 2 ? 'ChaCha20' : 'Snow2'} encrypted)</td></tr>
       <tr><th>Entries</th><td>${entries.length}</td></tr>
       <tr><th>Categories</th><td>${groups.size}</td></tr>
     </table>

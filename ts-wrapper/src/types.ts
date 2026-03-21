@@ -96,6 +96,8 @@ export interface MsEntryInfo {
 export interface MsParsedResult {
   entryCount: number;
   salt: string;
+  /** 1 = Snow2 (v1), 2 = ChaCha20 (v2). */
+  version: number;
   entries: MsEntryInfo[];
 }
 
@@ -169,6 +171,11 @@ export interface WasmExports {
     fileName: string,
     entryIndex: number,
     propPath: string,
+  ): Uint8Array;
+  decryptMsEntry(
+    data: Uint8Array,
+    fileName: string,
+    entryIndex: number,
   ): Uint8Array;
   encryptMsEntry(
     data: Uint8Array,

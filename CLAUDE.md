@@ -13,7 +13,8 @@ MapleStory WZ file parser and writer in Rust, compiled to WebAssembly via wasm-p
 cargo test
 
 # Build WASM (outputs to ts-wrapper/wasm-pkg/)
-wasm-pack build --target web --out-dir ts-wrapper/wasm-pkg
+# --features wasm is required to include wasm_api.rs exports
+wasm-pack build --target web --out-dir ts-wrapper/wasm-pkg --features wasm
 
 # TypeScript wrapper
 cd ts-wrapper && npm install && npx tsc
@@ -42,7 +43,7 @@ cargo llvm-cov --lib --html   # HTML coverage report
 ### Rust Core (`src/`)
 
 - **`wasm_api.rs`** — All wasm-bindgen exports (parse, edit, build). WASM boundary; complex data crosses via JSON serialization, binary data (canvas pixels, audio) as raw bytes. **Edit/Build APIs** use a packed binary format: `[json_len:u32][json][blob_count:u32][blob_len:u32][blob_data]...` separating JSON property trees from binary blobs (Canvas png_data, Sound header+audio, etc.) referenced by `blobIndex` fields in the JSON. There are no separate "save" exports — all saving goes through the build APIs.
-- **`crypto/`** — MapleStory encryption: AES-256-ECB WZ key generation (`aes_encryption.rs`), Snow 2.0 stream cipher (`snow2.rs`), byte-level custom cipher, CRC32 checksums. Four IV variants: GMS `[0x4D,0x23,0xC7,0x2B]`, EMS/MSEA `[0xB9,0x7D,0x63,0xE9]`, BMS/Classic `[0x00,0x00,0x00,0x00]`, plus user-provided custom IVs.
+- **`crypto/`** — MapleStory encryption: AES-256-ECB WZ key generation (`aes_encryption.rs`), Snow 2.0 stream cipher (`snow2.rs`), ChaCha20 stream cipher (`chacha20.rs`, RFC 7539 — used by MS file v2), byte-level custom cipher, CRC32 checksums. Four IV variants: GMS `[0x4D,0x23,0xC7,0x2B]`, EMS/MSEA `[0xB9,0x7D,0x63,0xE9]`, BMS/Classic `[0x00,0x00,0x00,0x00]`, plus user-provided custom IVs.
 - **`wz/`** — Binary format parsing:
   - `file.rs` — Top-level WZ file: PKG1 header, 64-bit format detection (v770+), brute-force version detection (0–2000) with CRC32 validation. Also: `WzFileType` enum and `detect_file_type()` for distinguishing standard/hotfix/list formats, `parse_hotfix_data_wz()` for headerless Data.wz files. **Writing:** `WzFile::save()` (three-phase: serialize images → compute offsets → write), `save_with_image_data()` (phases 2–3 with pre-serialized blobs), `save_hotfix_data_wz()`.
   - `binary_reader.rs` — Encrypted int/string/offset reading with lazy key generation.
@@ -51,7 +52,7 @@ cargo llvm-cov --lib --html   # HTML coverage report
   - `image.rs` — IMG property tree parsing, produces `WzProperty` enum (16 variants: Null, Short, Int, Long, Float, Double, String, SubProperty, Canvas, Convex, Sound, Vector, Uol, Lua, RawData, Video).
   - `image_writer.rs` — IMG property tree serialization (counterpart to `image.rs`). `write_image()` serializes a property tree to WZ binary. Handles all 16 property types including the 0x09 extended envelope for SubProperty, Canvas, Vector, Convex, Sound, UOL, RawData, Video.
   - `list_file.rs` — List.wz parser (pre-Big Bang path index). Different binary format: `[i32 len][u16 chars × len][u16 null]` entries, XOR-encrypted with WZ key (no incremental mask).
-  - `ms_file.rs` — v220+ `.ms` archive parsing and saving. Snow2-encrypted entries with per-entry key derivation. **Writing:** `encrypt_entry_data()` (reverse of decrypt), `save_ms_file()` (full .ms file construction).
+  - `ms_file.rs` — v220+ `.ms` archive parsing and saving. Two format versions: **v1** (Snow2 stream cipher, version byte 2) and **v2** (ChaCha20 stream cipher, version byte 4). `parse_ms_file()` auto-detects v1/v2. `decrypt_entry_data()` dispatches decryption by version. V2 uses `ChaCha20StreamReader` for entry tables (counter-resetting per 64-byte block) and only encrypts the first 1024 bytes of each entry. **Writing:** `save_ms_file()` always produces v1/Snow2 format (v2 writing is not yet implemented). V2 files are decoded and re-saved as v1.
   - `properties/mod.rs` — `WzProperty` enum definition, serialization, and accessor helpers (`as_int`, `as_float`, `as_str`, `children`, `get`).
   - `test_utils.rs` — Shared test helpers: `dummy_header()`, `make_reader()`, WZ encoding helpers (`encode_wz_ascii()`, `encode_wz_offset()`), image data builders. Used across `binary_reader`, `binary_writer`, `directory`, `image`, and `image_writer` tests.
 - **`image/`** — Pixel format decoders and encoders. `pixel.rs`/`dxt.rs` decode to RGBA8888; `encode.rs` encodes RGBA8888 back to WZ formats (BGRA4444, BGRA8888, ARGB1555, RGB565, R16, A8, RGBA1010102, RGBA32Float) and zlib-compresses raw data via `compress_png_data()`. DXT/BC encoding is not supported — use BGRA8888 for imported images.
@@ -100,7 +101,7 @@ Browser-based WZ file viewer/editor. Modular JS in `demo/js/`:
 2. `get_offsets()` + `get_img_offsets()` — walk directory tree assigning byte positions
 3. Write header → encrypted directory entries → image data blocks into a single buffer
 
-**MS file internals:** `save_ms_file()` constructs the full `.ms` format (random prefix, XOR-encoded salt, Snow2-encrypted header/entries, 1024-aligned double-encrypted data blocks). `encrypt_entry_data()` handles per-entry encryption.
+**MS file internals:** Two versions: **v1** uses Snow2 (double-encrypted first 1024 bytes per entry), **v2** uses ChaCha20 (only first 1024 bytes encrypted, with a `chacha20KeyObscure` XOR mask on all keys). `parse_ms_file()` auto-detects by checking the version byte. `decrypt_entry_data()` dispatches to `decrypt_entry_v1()` or `decrypt_entry_v2()`. Saving always uses v1/Snow2 via `save_ms_file()` — v2 files are decoded and re-saved as v1.
 
 ## Key Patterns
 

@@ -516,9 +516,15 @@ pub fn parse_ms_file(data: &[u8], file_name: &str) -> Result<String, JsError> {
         })
         .collect();
 
+    let version = match parsed.version {
+        crate::wz::ms_file::MsVersion::V1 => 1,
+        crate::wz::ms_file::MsVersion::V2 => 2,
+    };
+
     to_json_string(&serde_json::json!({
         "entryCount": parsed.entries.len(),
         "salt": parsed.salt,
+        "version": version,
         "entries": entries,
     }))
 }
@@ -676,6 +682,16 @@ fn detect_list_version(data: &[u8]) -> Result<String, JsError> {
 #[wasm_bindgen(js_name = "computeVersionHash")]
 pub fn compute_version_hash(version: i16) -> u32 {
     crate::wz::file::compute_version_hash(version)
+}
+
+#[wasm_bindgen(js_name = "decryptMsEntry")]
+pub fn decrypt_ms_entry(
+    data: &[u8],
+    file_name: &str,
+    entry_index: u32,
+) -> Result<Vec<u8>, JsError> {
+    let parsed = crate::wz::ms_file::parse_ms_file(data, file_name).to_js_err()?;
+    crate::wz::ms_file::decrypt_entry_data(data, &parsed, entry_index as usize).to_js_err()
 }
 
 #[wasm_bindgen(js_name = "encryptMsEntry")]
@@ -1019,6 +1035,8 @@ pub fn build_ms_file(
         name: String,
         #[serde(rename = "entryKey")]
         entry_key: Vec<u8>,
+        #[serde(rename = "originalSize")]
+        original_size: Option<usize>,
     }
 
     let entry_defs: Vec<EntryDef> = serde_json::from_str(entries_json).to_js_err()?;
@@ -1045,6 +1063,7 @@ pub fn build_ms_file(
             name: def.name.clone(),
             image_data: blob.to_vec(),
             entry_key: key,
+            original_size: def.original_size,
         });
     }
 

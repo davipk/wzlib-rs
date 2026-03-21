@@ -1,4 +1,4 @@
-import { parseWzImage, parseMsImage, decompressPngData, decodePixels } from '../../ts-wrapper/wasm-pkg/wzlib_rs.js';
+import { parseWzImage, parseMsImage, decryptMsEntry, decompressPngData, decodePixels } from '../../ts-wrapper/wasm-pkg/wzlib_rs.js';
 import { state, $, propChildrenData, childContainerMap, propPathMap, resetPropertyState, imgCache, msImgCache } from './state.js';
 import { escapeHtml, formatBytes, countProps, formatPropValue, searchEditorHtml } from './utils.js';
 import { loadCanvasPreview, loadSoundPlayer, loadVideoDownload, getCanvasAnimFrames, createAnimPlayer } from './media.js';
@@ -650,6 +650,10 @@ export async function openImage(img) {
 }
 
 export async function openMsImage(entry) {
+  // Non-.img entries (e.g. .txt) — decrypt and show raw content
+  if (!entry.name.toLowerCase().endsWith('.img')) {
+    return openMsRawEntry(entry);
+  }
   return openAndCacheImage({
     cache: msImgCache,
     cacheKey: entry.index,
@@ -666,6 +670,31 @@ export async function openMsImage(entry) {
     viewKey: entry.index,
     beforeParse: () => { state.currentMsEntryIndex = entry.index; },
   });
+}
+
+function openMsRawEntry(entry) {
+  state.currentMsEntryIndex = entry.index;
+  const raw = decryptMsEntry(state.wzData, state.msFileName, entry.index);
+  let content;
+  try {
+    content = new TextDecoder('utf-8', { fatal: true }).decode(raw);
+  } catch {
+    // Not valid UTF-8 — show hex dump
+    const hex = Array.from(raw.slice(0, 4096), b => b.toString(16).padStart(2, '0')).join(' ');
+    content = hex + (raw.length > 4096 ? `\n\n... (${formatBytes(raw.length)} total)` : '');
+  }
+
+  $.detailEmpty.style.display = 'none';
+  $.detail.style.display = '';
+  $.detail.innerHTML = `
+    <h2>${escapeHtml(entry.name)}</h2>
+    <table class="props">
+      <tr><th>Type</th><td>Raw File</td></tr>
+      <tr><th>Size</th><td>${formatBytes(entry.size)}</td></tr>
+      <tr><th>Index</th><td>${entry.index}</td></tr>
+    </table>
+    <pre style="margin-top: 12px; padding: 12px; background: var(--bg-card); border-radius: 6px; overflow: auto; max-height: 600px; white-space: pre-wrap; word-break: break-all; font-size: 13px;">${escapeHtml(content)}</pre>
+  `;
 }
 
 function showProperties(name, properties, tableRows, onSave, viewKey, forceEditMode = null) {

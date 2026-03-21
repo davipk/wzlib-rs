@@ -8,7 +8,7 @@ Reads and writes `.wz` and `.ms` archives used by MapleStory — directory trees
 
 - **Standard WZ** — parse and save directory trees, IMG properties, version auto-detection, 64-bit support
 - **Hotfix & List WZ** — headerless Data.wz and pre-Big Bang List.wz path indices
-- **MS archives** — v220+ Snow2-encrypted `.ms` files with per-entry decryption and encryption
+- **MS archives** — v220+ `.ms` files: v1 (Snow2) and v2 (ChaCha20) with auto-detection, per-entry decryption/encryption
 - **Canvas decoding** — 14 pixel formats (DXT1/3/5, BC7, BGRA4444/8888, RGB565, etc.) → RGBA8888
 - **Sound extraction** — MP3/PCM for Web Audio playback
 - **Video extraction** — MCV container parsing with frame metadata
@@ -27,8 +27,8 @@ Reads and writes `.wz` and `.ms` archives used by MapleStory — directory trees
 ### Build
 
 ```bash
-# Build WASM package
-wasm-pack build --target web --out-dir ts-wrapper/wasm-pkg
+# Build WASM package (--features wasm is required)
+wasm-pack build --target web --out-dir ts-wrapper/wasm-pkg --features wasm
 
 # Build TypeScript wrapper
 cd ts-wrapper
@@ -91,7 +91,7 @@ const msSaved = parser.buildMsFile("output.ms", "salt", msEntries, [imageBlob]);
 
 ```
 src/                  Rust WASM core
-├── crypto/           AES, Snow2, custom encryption, CRC32
+├── crypto/           AES, Snow2, ChaCha20, custom encryption, CRC32
 ├── wz/               WZ/MS/List file parsing + writing, MCV video, properties
 ├── image/            Pixel format decoders (DXT, BC7, etc.) → RGBA8888
 └── wasm_api.rs       wasm-bindgen exports (parse + save)

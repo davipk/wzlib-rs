@@ -252,7 +252,16 @@ export class WzParser {
     return this.wasm.extractMsSound(data, fileName, entryIndex, propPath);
   }
 
-  /** Encrypt a single .ms entry's image data. */
+  /** Decrypt a single .ms entry and return raw bytes (no WZ image parsing). */
+  decryptMsEntry(
+    data: Uint8Array,
+    fileName: string,
+    entryIndex: number,
+  ): Uint8Array {
+    return this.wasm.decryptMsEntry(data, fileName, entryIndex);
+  }
+
+  /** Encrypt a single .ms entry's image data (always v1/Snow2). */
   encryptMsEntry(
     data: Uint8Array,
     salt: string,
