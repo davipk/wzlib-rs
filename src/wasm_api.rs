@@ -700,13 +700,14 @@ pub fn encrypt_ms_entry(
     salt: &str,
     entry_name: &str,
     entry_key: &[u8],
+    version: u8,
 ) -> Result<Vec<u8>, JsError> {
     if entry_key.len() != 16 {
         return Err(JsError::new("entry_key must be exactly 16 bytes"));
     }
     let mut key = [0u8; 16];
     key.copy_from_slice(entry_key);
-    Ok(crate::wz::ms_file::encrypt_entry_data(data, salt, entry_name, &key))
+    Ok(crate::wz::ms_file::encrypt_entry_data(data, salt, entry_name, &key, version.into()))
 }
 
 // ── Image encoding exports ──────────────────────────────────────────
@@ -1029,6 +1030,7 @@ pub fn build_ms_file(
     salt: &str,
     entries_json: &str,
     image_blobs: &[u8],
+    version: u8,
 ) -> Result<Vec<u8>, JsError> {
     #[derive(serde::Deserialize)]
     struct EntryDef {
@@ -1067,5 +1069,5 @@ pub fn build_ms_file(
         });
     }
 
-    crate::wz::ms_file::save_ms_file(file_name, salt, &entries).to_js_err()
+    crate::wz::ms_file::build_ms_file(file_name, salt, &entries, version.into()).to_js_err()
 }

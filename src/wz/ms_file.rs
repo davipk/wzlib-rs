@@ -66,6 +66,15 @@ pub enum MsVersion {
     V2, // ChaCha20, version byte = 4
 }
 
+impl From<u8> for MsVersion {
+    fn from(v: u8) -> Self {
+        match v {
+            2 => MsVersion::V2,
+            _ => MsVersion::V1,
+        }
+    }
+}
+
 pub struct MsParsedFile {
     pub version: MsVersion,
     pub salt: String,
@@ -122,6 +131,15 @@ fn entry_pad_amount(file_name: &str) -> usize {
 
 fn align_to_block(size: usize) -> usize {
     (size + BLOCK_ALIGNMENT - 1) & !(BLOCK_ALIGNMENT - 1)
+}
+
+/// Deterministic pseudo-random bytes seeded from position index (reproducible across builds).
+fn generate_rand_bytes(count: usize) -> Vec<u8> {
+    let mut bytes = vec![0u8; count];
+    for (i, b) in bytes.iter_mut().enumerate() {
+        *b = ((i as u32).wrapping_mul(0x41C64E6D).wrapping_add(0x3039) >> 16) as u8;
+    }
+    bytes
 }
 
 // ── Key derivation (shared core) ─────────────────────────────────────
@@ -469,7 +487,8 @@ fn parse_ms_file_v1(data: &[u8], file_name: &str, rbc: usize) -> WzResult<MsPars
 
     // Snow2 reads in 4-byte blocks → round up, then align to 1024
     let raw_bytes_consumed = (epos + 3) & !3;
-    let data_start_pos = (entry_start + raw_bytes_consumed + 0x3FF) & !0x3FF;
+    let entry_table_end = entry_start + raw_bytes_consumed;
+    let data_start_pos = (entry_table_end + 0x3FF) & !0x3FF;
 
     for entry in &mut entries {
         entry.start_pos = data_start_pos + entry.start_pos * BLOCK_ALIGNMENT;
@@ -532,7 +551,7 @@ fn parse_ms_file_v2(
     header_block.copy_from_slice(&data[header_start..header_start + CHACHA_BLOCK_SIZE]);
     ChaCha20::new(&header_key, &empty_nonce, 0).process(&mut header_block);
 
-    let _hash = i32::from_le_bytes([
+    let _header_hash = i32::from_le_bytes([
         header_block[0],
         header_block[1],
         header_block[2],
@@ -576,7 +595,7 @@ fn parse_ms_file_v2(
         let _unk1 = reader.read_i32()?;
         let _unk2 = reader.read_i32()?;
         let ek_vec = reader.read_bytes(16)?;
-        let _unk3 = reader.read_i32()?; // v2 extra fields
+        let _unk3 = reader.read_i32()?;
         let _unk4 = reader.read_i32()?;
 
         let mut ek = [0u8; 16];
@@ -593,7 +612,8 @@ fn parse_ms_file_v2(
 
     // ChaCha20StreamReader reads in 64-byte blocks → round up, then align to 1024
     let raw_bytes_consumed = reader.bytes_consumed();
-    let data_start_pos = (entry_start + raw_bytes_consumed + 0x3FF) & !0x3FF;
+    let entry_table_end = entry_start + raw_bytes_consumed;
+    let data_start_pos = (entry_table_end + 0x3FF) & !0x3FF;
 
     for entry in &mut entries {
         entry.start_pos = data_start_pos + entry.start_pos * BLOCK_ALIGNMENT;
@@ -708,17 +728,20 @@ impl MsSaveEntry {
     }
 }
 
-/// Reverse of v1 `decrypt_entry_data()`.
 pub fn encrypt_entry_data(
     data: &[u8],
     salt: &str,
     entry_name: &str,
     entry_key: &[u8; 16],
+    version: MsVersion,
 ) -> Vec<u8> {
-    encrypt_entry_data_with_size(data, salt, entry_name, entry_key, None)
+    match version {
+        MsVersion::V1 => encrypt_entry_data_v1(data, salt, entry_name, entry_key, None),
+        MsVersion::V2 => encrypt_entry_data_v2(data, salt, entry_name, entry_key, None),
+    }
 }
 
-fn encrypt_entry_data_with_size(
+fn encrypt_entry_data_v1(
     data: &[u8],
     salt: &str,
     entry_name: &str,
@@ -739,7 +762,7 @@ fn encrypt_entry_data_with_size(
     buffer
 }
 
-pub fn save_ms_file(
+fn build_ms_file_v1(
     file_name: &str,
     salt: &str,
     entries: &[MsSaveEntry],
@@ -747,13 +770,7 @@ pub fn save_ms_file(
     let file_name_lower = file_name.to_lowercase();
     let mut output = Vec::new();
 
-    let rbc = rand_byte_count(&file_name_lower);
-
-    // Deterministic "random" bytes (seeded from filename for reproducibility)
-    let mut rand_bytes = vec![0u8; rbc];
-    for (i, b) in rand_bytes.iter_mut().enumerate() {
-        *b = ((i as u32).wrapping_mul(0x41C64E6D).wrapping_add(0x3039) >> 16) as u8;
-    }
+    let rand_bytes = generate_rand_bytes(rand_byte_count(&file_name_lower));
     output.extend_from_slice(&rand_bytes);
 
     let salt_len = salt.len();
@@ -829,7 +846,7 @@ pub fn save_ms_file(
     output.resize(padded_len, 0);
 
     for entry in entries {
-        let encrypted = encrypt_entry_data_with_size(
+        let encrypted = encrypt_entry_data_v1(
             &entry.image_data,
             salt,
             &entry.name,
@@ -840,6 +857,246 @@ pub fn save_ms_file(
     }
 
     Ok(output)
+}
+
+// ── ChaCha20 stream writer (for v2 entry table encryption) ──────────
+//
+// Exact mirror of `ChaCha20StreamReader`: encrypts in 64-byte blocks,
+// resets the counter when a write_bytes call ends with the buffer just flushed.
+
+struct ChaCha20StreamWriter {
+    output: Vec<u8>,
+    buffer: [u8; CHACHA_BLOCK_SIZE],
+    buf_pos: usize,
+    cipher: ChaCha20,
+}
+
+impl ChaCha20StreamWriter {
+    fn new(key: &[u8; CHACHA_KEY_LEN], nonce: &[u8; CHACHA_NONCE_LEN]) -> Self {
+        Self {
+            output: Vec::new(),
+            buffer: [0u8; CHACHA_BLOCK_SIZE],
+            buf_pos: 0,
+            cipher: ChaCha20::new(key, nonce, 0),
+        }
+    }
+
+    fn write_bytes(&mut self, data: &[u8]) {
+        let mut offset = 0;
+        while offset < data.len() {
+            let space = CHACHA_BLOCK_SIZE - self.buf_pos;
+            let n = (data.len() - offset).min(space);
+            self.buffer[self.buf_pos..self.buf_pos + n]
+                .copy_from_slice(&data[offset..offset + n]);
+            self.buf_pos += n;
+            offset += n;
+
+            if self.buf_pos >= CHACHA_BLOCK_SIZE {
+                self.cipher.process(&mut self.buffer);
+                self.output.extend_from_slice(&self.buffer);
+                self.buffer = [0u8; CHACHA_BLOCK_SIZE];
+                self.buf_pos = 0;
+            }
+        }
+
+        // Mirror ChaCha20StreamReader: reset counter when write ends with buffer just flushed
+        if self.buf_pos == 0 && !data.is_empty() {
+            self.cipher.reset_counter();
+        }
+    }
+
+    fn write_i32(&mut self, val: i32) {
+        self.write_bytes(&val.to_le_bytes());
+    }
+
+    /// Write a length-prefixed UTF-16LE string (mirrors `ChaCha20StreamReader::read_string`)
+    fn write_string(&mut self, s: &str) {
+        let utf16: Vec<u16> = s.encode_utf16().collect();
+        self.write_i32(utf16.len() as i32);
+        let bytes: Vec<u8> = utf16.iter().flat_map(|c| c.to_le_bytes()).collect();
+        self.write_bytes(&bytes);
+    }
+
+    /// Flush any partial block (pad with zeros, encrypt, append) and return the output.
+    fn finish(mut self) -> Vec<u8> {
+        if self.buf_pos > 0 {
+            self.cipher.process(&mut self.buffer);
+            self.output.extend_from_slice(&self.buffer);
+        }
+        self.output
+    }
+
+}
+
+// ── V2 entry data encryption ────────────────────────────────────────
+
+fn encrypt_entry_data_v2(
+    data: &[u8],
+    salt: &str,
+    entry_name: &str,
+    entry_key: &[u8; 16],
+    size_aligned: Option<usize>,
+) -> Vec<u8> {
+    let img_key = derive_img_key_v2(salt, entry_name, entry_key);
+    let (nonce, counter) = derive_img_nonce_counter(salt);
+
+    let aligned_size = size_aligned.unwrap_or_else(|| align_to_block(data.len()));
+    let mut buffer = vec![0u8; aligned_size];
+    buffer[..data.len()].copy_from_slice(data);
+
+    // Only encrypt first min(size, 1024) bytes, rounded up to ChaCha20 block boundary
+    let crypted_size = data.len().min(DOUBLE_ENCRYPT_BYTES);
+    let encrypt_len = (crypted_size + CHACHA_BLOCK_SIZE - 1) & !(CHACHA_BLOCK_SIZE - 1);
+    let encrypt_len = encrypt_len.min(buffer.len());
+    ChaCha20::new(&img_key, &nonce, counter).process(&mut buffer[..encrypt_len]);
+
+    buffer
+}
+
+// ── V2 salt encoding ────────────────────────────────────────────────
+
+/// Reverse of the v2 salt decode transform.
+/// Given a desired salt character, find a value `a` such that
+/// `((a | 0x4B) << 1) - a - 75` truncated to u8 equals `c`.
+fn v2_encode_salt_value(c: u8) -> u8 {
+    for a in 0u16..=255 {
+        let a8 = a as u8;
+        let val = (((a8 as i32 | 0x4B) << 1) - a8 as i32 - 75) as u8;
+        if val == c {
+            return a8;
+        }
+    }
+    c
+}
+
+fn v2_encode_salt(salt: &str, shifted_rand: &[u8]) -> (Vec<u8>, i32, i32) {
+    let salt_len = salt.len();
+    let hashed_salt_len = (salt_len as u8 ^ shifted_rand[0]) as i32;
+
+    let mut raw_salt_bytes = Vec::with_capacity(salt_len * 2);
+    let mut salt_u16_sum: i32 = 0;
+
+    for (i, c) in salt.bytes().enumerate() {
+        let a = v2_encode_salt_value(c);
+        let lo = a ^ shifted_rand[i];
+        // High byte is sign extension of lo (matches original MapleStory encoder)
+        let hi = if (lo as i8) < 0 { 0xFFu8 } else { 0x00u8 };
+        raw_salt_bytes.push(lo);
+        raw_salt_bytes.push(hi);
+        salt_u16_sum += u16::from_le_bytes([lo, hi]) as i32;
+    }
+
+    (raw_salt_bytes, hashed_salt_len, salt_u16_sum)
+}
+
+// ── V2 from-scratch file builder ────────────────────────────────────
+
+fn build_ms_file_v2(
+    file_name: &str,
+    salt: &str,
+    entries: &[MsSaveEntry],
+) -> WzResult<Vec<u8>> {
+    let file_name_lower = file_name.to_lowercase();
+    let mut output = Vec::new();
+
+    let rand_bytes = generate_rand_bytes(rand_byte_count(&file_name_lower));
+    let shifted_rand: Vec<u8> = rand_bytes.iter()
+        .map(|&b| ((b as i8) >> 1) as u8)
+        .collect();
+
+    output.extend_from_slice(&rand_bytes);
+
+    let raw_version_byte = MS_VERSION_V2 ^ shifted_rand[0];
+    output.push(raw_version_byte);
+
+    let (raw_salt_bytes, hashed_salt_len, salt_u16_sum) = v2_encode_salt(salt, &shifted_rand);
+    write_i32_le(&mut output, hashed_salt_len);
+    output.extend_from_slice(&raw_salt_bytes);
+
+    let file_name_with_salt = format!("{}{}", file_name_lower, salt);
+
+    let header_hash = hashed_salt_len
+        + raw_version_byte as i32
+        + MS_VERSION_V2 as i32
+        + entries.len() as i32
+        + salt_u16_sum;
+
+    let mut header_block = [0u8; CHACHA_BLOCK_SIZE];
+    header_block[0..4].copy_from_slice(&header_hash.to_le_bytes());
+    header_block[4..8].copy_from_slice(&(entries.len() as i32).to_le_bytes());
+    let header_key = derive_chacha_key(&file_name_with_salt, false);
+    let empty_nonce = [0u8; CHACHA_NONCE_LEN];
+    ChaCha20::new(&header_key, &empty_nonce, 0).process(&mut header_block);
+    output.extend_from_slice(&header_block);
+
+    // entry_start = header_pos + 8 + pad + 64 (block), so inter-pad = 8 + pad
+    let epa = entry_pad_amount(&file_name_lower);
+    let inter_pad_len = 8 + epa;
+    output.extend(std::iter::repeat(0u8).take(inter_pad_len));
+
+    let entry_key_chacha = derive_chacha_key(&file_name_with_salt, true);
+    let mut writer = ChaCha20StreamWriter::new(&entry_key_chacha, &empty_nonce);
+    let mut block_offset: usize = 0;
+
+    for entry in entries {
+        let aligned_size = entry.aligned_size();
+        let block_idx = block_offset / BLOCK_ALIGNMENT;
+        let ek_sum: i32 = entry.entry_key.iter().map(|&b| b as i32).sum();
+        let flags: i32 = 0;
+        let unk1: i32 = 0;
+        let unk2: i32 = 0;
+        let checksum = flags + block_idx as i32
+            + entry.image_data.len() as i32
+            + aligned_size as i32
+            + unk1
+            + ek_sum;
+
+        writer.write_string(&entry.name);
+        writer.write_i32(checksum);
+        writer.write_i32(flags);
+        writer.write_i32(block_idx as i32);
+        writer.write_i32(entry.image_data.len() as i32);
+        writer.write_i32(aligned_size as i32);
+        writer.write_i32(unk1);
+        writer.write_i32(unk2);
+        writer.write_bytes(&entry.entry_key);
+        writer.write_i32(0); // unk3
+        writer.write_i32(0); // unk4
+
+        block_offset += aligned_size;
+    }
+    let encrypted_entries = writer.finish();
+    output.extend_from_slice(&encrypted_entries);
+
+    let padded_len = align_to_block(output.len());
+    output.resize(padded_len, 0);
+
+    for entry in entries {
+        let encrypted = encrypt_entry_data_v2(
+            &entry.image_data,
+            salt,
+            &entry.name,
+            &entry.entry_key,
+            Some(entry.aligned_size()),
+        );
+        output.extend_from_slice(&encrypted);
+    }
+
+    Ok(output)
+}
+
+// ── Unified public builder ───────────────────────────────────────────
+
+pub fn build_ms_file(
+    file_name: &str,
+    salt: &str,
+    entries: &[MsSaveEntry],
+    version: MsVersion,
+) -> WzResult<Vec<u8>> {
+    match version {
+        MsVersion::V1 => build_ms_file_v1(file_name, salt, entries),
+        MsVersion::V2 => build_ms_file_v2(file_name, salt, entries),
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -986,7 +1243,7 @@ mod tests {
         let name = "Mob/test.img";
         let entry_key = [0x42u8; 16];
 
-        let encrypted = encrypt_entry_data(&original, salt, name, &entry_key);
+        let encrypted = encrypt_entry_data(&original, salt, name, &entry_key, MsVersion::V1);
         assert_ne!(&encrypted[..original.len()], &original[..]);
 
         let img_key = derive_img_key_v1(salt, name, &entry_key);
@@ -1014,7 +1271,7 @@ mod tests {
             original_size: None,
         }];
 
-        let saved = save_ms_file(file_name, salt, &entries).unwrap();
+        let saved = build_ms_file(file_name, salt, &entries, MsVersion::V1).unwrap();
         let parsed = parse_ms_file(&saved, file_name).unwrap();
 
         assert_eq!(parsed.version, MsVersion::V1);
@@ -1046,7 +1303,7 @@ mod tests {
             },
         ];
 
-        let saved = save_ms_file(file_name, salt, &entries).unwrap();
+        let saved = build_ms_file(file_name, salt, &entries, MsVersion::V1).unwrap();
         let parsed = parse_ms_file(&saved, file_name).unwrap();
 
         assert_eq!(parsed.entries.len(), 2);
@@ -1145,4 +1402,189 @@ mod tests {
         }
         assert_eq!(h, expected);
     }
+
+    // ── V2 encrypt/decrypt entry roundtrip ────────────────────
+
+    #[test]
+    fn test_v2_encrypt_decrypt_entry_roundtrip() {
+        let salt = "test_salt";
+        let entry_name = "Mob/test.img";
+        let entry_key = [0x55u8; 16];
+        let original = vec![0x73u8; 200];
+
+        let encrypted = encrypt_entry_data_v2(&original, salt, entry_name, &entry_key, None);
+        assert_ne!(&encrypted[..original.len()], &original[..]);
+
+        let file = MsParsedFile {
+            version: MsVersion::V2,
+            salt: salt.into(),
+            file_name_with_salt: String::new(),
+            entries: vec![MsEntry {
+                name: entry_name.into(),
+                size: original.len(),
+                size_aligned: encrypted.len(),
+                start_pos: 0,
+                entry_key,
+            }],
+            data_start_pos: 0,
+        };
+
+        let decrypted = decrypt_entry_data(&encrypted, &file, 0).unwrap();
+        assert_eq!(decrypted, original);
+    }
+
+    #[test]
+    fn test_v2_encrypt_decrypt_large_entry() {
+        let salt = "big_salt";
+        let entry_name = "Map/large.img";
+        let entry_key = [0xAA; 16];
+        let original = vec![0x42u8; 2048];
+
+        let encrypted = encrypt_entry_data_v2(&original, salt, entry_name, &entry_key, None);
+
+        let file = MsParsedFile {
+            version: MsVersion::V2,
+            salt: salt.into(),
+            file_name_with_salt: String::new(),
+            entries: vec![MsEntry {
+                name: entry_name.into(),
+                size: original.len(),
+                size_aligned: encrypted.len(),
+                start_pos: 0,
+                entry_key,
+            }],
+            data_start_pos: 0,
+        };
+
+        let decrypted = decrypt_entry_data(&encrypted, &file, 0).unwrap();
+        assert_eq!(decrypted, original);
+    }
+
+    // ── ChaCha20 stream writer roundtrip ──────────────────────
+
+    #[test]
+    fn test_chacha20_stream_writer_reader_roundtrip() {
+        let key = [0x42u8; CHACHA_KEY_LEN];
+        let nonce = [0u8; CHACHA_NONCE_LEN];
+
+        let mut writer = ChaCha20StreamWriter::new(&key, &nonce);
+        writer.write_string("Mob/0100000.img");
+        writer.write_i32(42);
+        writer.write_i32(0);
+        writer.write_bytes(&[0xAB; 16]);
+        writer.write_i32(99);
+        writer.write_i32(100);
+        let encrypted = writer.finish();
+
+        let mut reader = ChaCha20StreamReader::new(&encrypted, &key, &nonce);
+        assert_eq!(reader.read_string().unwrap(), "Mob/0100000.img");
+        assert_eq!(reader.read_i32().unwrap(), 42);
+        assert_eq!(reader.read_i32().unwrap(), 0);
+        let bytes = reader.read_bytes(16).unwrap();
+        assert!(bytes.iter().all(|&b| b == 0xAB));
+        assert_eq!(reader.read_i32().unwrap(), 99);
+        assert_eq!(reader.read_i32().unwrap(), 100);
+    }
+
+    // ── V2 from-scratch build + parse roundtrip ──────────────
+
+    #[test]
+    fn test_build_ms_file_v2_roundtrip() {
+        let file_name = "test_v2.ms";
+        let salt = "abcdef";
+        let image_data = vec![0x73u8, 0xAB, 0xCD, 0xEF, 0x01, 0x02, 0x03, 0x04];
+        let entry_key = [0x11u8; 16];
+
+        let entries = vec![MsSaveEntry {
+            name: "Mob/0100.img".into(),
+            image_data: image_data.clone(),
+            entry_key,
+            original_size: None,
+        }];
+
+        let saved = build_ms_file(file_name, salt, &entries, MsVersion::V2).unwrap();
+        let parsed = parse_ms_file(&saved, file_name).unwrap();
+
+        assert_eq!(parsed.version, MsVersion::V2);
+        assert_eq!(parsed.entries.len(), 1);
+        assert_eq!(parsed.entries[0].name, "Mob/0100.img");
+        assert_eq!(parsed.entries[0].size, image_data.len());
+
+        let decrypted = decrypt_entry_data(&saved, &parsed, 0).unwrap();
+        assert_eq!(&decrypted[..image_data.len()], &image_data[..]);
+    }
+
+    #[test]
+    fn test_build_ms_file_v2_multiple_entries() {
+        let file_name = "multi_v2.ms";
+        let salt = "xyz123";
+
+        let entries = vec![
+            MsSaveEntry {
+                name: "Map/town.img".into(),
+                image_data: vec![0x73; 500],
+                entry_key: [0x22; 16],
+                original_size: None,
+            },
+            MsSaveEntry {
+                name: "Npc/shop.img".into(),
+                image_data: vec![0x73; 1500],
+                entry_key: [0x33; 16],
+                original_size: None,
+            },
+            MsSaveEntry {
+                name: "Mob/boss.img".into(),
+                image_data: vec![0x42; 3000],
+                entry_key: [0x44; 16],
+                original_size: None,
+            },
+        ];
+
+        let saved = build_ms_file(file_name, salt, &entries, MsVersion::V2).unwrap();
+        let parsed = parse_ms_file(&saved, file_name).unwrap();
+
+        assert_eq!(parsed.version, MsVersion::V2);
+        assert_eq!(parsed.entries.len(), 3);
+
+        for i in 0..3 {
+            assert_eq!(parsed.entries[i].name, entries[i].name);
+            assert_eq!(parsed.entries[i].size, entries[i].image_data.len());
+            let decrypted = decrypt_entry_data(&saved, &parsed, i).unwrap();
+            assert_eq!(&decrypted[..entries[i].image_data.len()], &entries[i].image_data[..]);
+        }
+    }
+
+    // ── V2 salt encoding roundtrip ────────────────────────
+
+    #[test]
+    fn test_v2_salt_encode_decode_roundtrip() {
+        let salt = "hello_world_test";
+        let shifted_rand: Vec<u8> = (0..salt.len())
+            .map(|i| ((i as u32 * 37 + 13) & 0xFF) as u8)
+            .collect();
+
+        let (raw_salt_bytes, _, _) = v2_encode_salt(salt, &shifted_rand);
+
+        // Decode using the same transform as parse_ms_file_v2
+        let decoded: String = (0..salt.len())
+            .map(|i| {
+                let a = (shifted_rand[i] ^ raw_salt_bytes[i * 2]) as i32;
+                let b = ((a | 0x4B) << 1) - a - 75;
+                char::from(b as u8)
+            })
+            .collect();
+
+        assert_eq!(decoded, salt);
+    }
+
+    #[test]
+    fn test_v2_salt_encode_all_printable_ascii() {
+        // Verify encoding works for all printable ASCII chars
+        for c in 32u8..=126 {
+            let a = v2_encode_salt_value(c);
+            let val = (((a as i32 | 0x4B) << 1) - a as i32 - 75) as u8;
+            assert_eq!(val, c, "Failed to encode ASCII {}", c);
+        }
+    }
+
 }

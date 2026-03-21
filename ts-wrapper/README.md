@@ -98,13 +98,13 @@ After editing the JSON tree and blobs, use these methods to produce binary outpu
 | ----------------------------------------------------------------------- | -------------------------------------------------------- |
 | `buildImage(properties, blobs, version, customIv?)`                     | Build a serialized WZ image from modified tree + blobs   |
 | `buildFile(directory, imageBlobs, version, versionName, is64bit, customIv?)` | Build a complete `.wz` file from directory + image blobs |
-| `buildMsFile(fileName, salt, entries, imageBlobs)`                      | Build a complete `.ms` file from entries + image blobs   |
+| `buildMsFile(fileName, salt, entries, imageBlobs, version?)` | Build a complete `.ms` file (version: `1` = Snow2, `2` = ChaCha20; default `1`) |
 
 #### MS Encryption Utilities
 
-| Method                                            | Description                                 |
-| ------------------------------------------------- | ------------------------------------------- |
-| `encryptMsEntry(data, salt, entryName, entryKey)` | Encrypt a single `.ms` entry's image data   |
+| Method                                                     | Description                                                                     |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `encryptMsEntry(data, salt, entryName, entryKey, version?)` | Encrypt a single `.ms` entry's image data (version: `1` = Snow2, `2` = ChaCha20; default `1`) |
 
 #### Key & Version Utilities
 
@@ -366,4 +366,35 @@ const a = document.createElement('a');
 a.href = url;
 a.download = 'Mob.wz';
 a.click();
+```
+
+### Modify and Rebuild a .ms File
+
+```typescript
+const parser = await WzParser.create();
+const msData = new Uint8Array(/* ... */);
+const fileName = 'Mob_00000.ms';
+
+// Parse and get entry list + salt + version
+const parsed = parser.parseMsFile(msData, fileName);
+
+// Decrypt an entry, modify it, then rebuild the whole file
+const entries = [];
+const imageBlobs = [];
+for (const entry of parsed.entries) {
+  const { properties, blobs } = parser.parseMsImageForEdit(msData, fileName, entry.index);
+
+  // Modify mob HP in entry 0
+  if (entry.index === 0) {
+    const hp = properties.find(p => p.name === 'info')
+      ?.children?.find(p => p.name === 'maxHP');
+    if (hp) hp.value = 99999;
+  }
+
+  entries.push({ name: entry.name, entryKey: entry.entryKey });
+  imageBlobs.push(parser.buildImage(properties, blobs, 'bms'));
+}
+
+// Rebuild as the same version (1 = Snow2, 2 = ChaCha20)
+const output = parser.buildMsFile(fileName, parsed.salt, entries, imageBlobs, parsed.version);
 ```

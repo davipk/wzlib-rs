@@ -261,14 +261,14 @@ export class WzParser {
     return this.wasm.decryptMsEntry(data, fileName, entryIndex);
   }
 
-  /** Encrypt a single .ms entry's image data (always v1/Snow2). */
   encryptMsEntry(
     data: Uint8Array,
     salt: string,
     entryName: string,
     entryKey: Uint8Array,
+    version: number = 1,
   ): Uint8Array {
-    return this.wasm.encryptMsEntry(data, salt, entryName, entryKey);
+    return this.wasm.encryptMsEntry(data, salt, entryName, entryKey, version);
   }
 
   // ── Encoding ──────────────────────────────────────────────────────
@@ -346,9 +346,10 @@ export class WzParser {
     salt: string,
     entries: MsBuildEntry[],
     imageBlobs: Uint8Array[],
+    version: number = 1,
   ): Uint8Array {
     const packedBlobs = packBlobs(imageBlobs);
-    return this.wasm.buildMsFile(fileName, salt, JSON.stringify(entries), packedBlobs);
+    return this.wasm.buildMsFile(fileName, salt, JSON.stringify(entries), packedBlobs, version);
   }
 
   // ── Internal ──────────────────────────────────────────────────────

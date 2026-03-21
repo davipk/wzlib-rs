@@ -8,7 +8,7 @@ Reads and writes `.wz` and `.ms` archives used by MapleStory — directory trees
 
 - **Standard WZ** — parse and save directory trees, IMG properties, version auto-detection, 64-bit support
 - **Hotfix & List WZ** — headerless Data.wz and pre-Big Bang List.wz path indices
-- **MS archives** — v220+ `.ms` files: v1 (Snow2) and v2 (ChaCha20) with auto-detection, per-entry decryption/encryption
+- **MS archives** — v220+ `.ms` files: v1 (Snow2) and v2 (ChaCha20) with auto-detection, full read/write for both versions
 - **Canvas decoding** — 14 pixel formats (DXT1/3/5, BC7, BGRA4444/8888, RGB565, etc.) → RGBA8888
 - **Sound extraction** — MP3/PCM for Web Audio playback
 - **Video extraction** — MCV container parsing with frame metadata
@@ -82,9 +82,9 @@ const { properties, blobs } = parser.parseHotfixForEdit(wzData, "bms");
 properties.find(p => p.name === "hp").value = 9999;
 const saved = parser.buildImage(properties, blobs, "bms");
 
-// Build a .ms file from entries
+// Build a .ms file from entries (version: 1 = Snow2, 2 = ChaCha20)
 const msEntries = [{ name: "Mob/test.img", entryKey: [...key16] }];
-const msSaved = parser.buildMsFile("output.ms", "salt", msEntries, [imageBlob]);
+const msSaved = parser.buildMsFile("output.ms", "salt", msEntries, [imageBlob], 2);
 ```
 
 ## Architecture

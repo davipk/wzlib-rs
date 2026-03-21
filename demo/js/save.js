@@ -125,9 +125,9 @@ export async function saveCurrentFile() {
         break;
       }
       case 'ms': {
-        // MS format derives encryption keys from the filename — saved file must
-        // use the same filename it was built with, otherwise it can't be reopened.
-        const result = await withProgress('Saving MS file as v1 (building all entries)...', () => {
+        const isV2 = state.msVersion === 2;
+        const label = isV2 ? 'Saving MS file (v2/ChaCha20)...' : 'Saving MS file (v1/Snow2)...';
+        const result = await withProgress(label, () => {
           const parsed = JSON.parse(parseMsFile(state.wzData, state.msFileName));
           const entryDefs = parsed.entries.map((e) => ({
             name: e.name,
@@ -135,7 +135,9 @@ export async function saveCurrentFile() {
             originalSize: state.editableImages.has(`ms:${e.index}`) ? undefined : e.size,
           }));
           const imageBlobs = parsed.entries.map((e, i) => buildImageFromMs(i, e.name));
-          return buildMsFile(state.msFileName, state.msSalt, JSON.stringify(entryDefs), packBlobs(imageBlobs));
+          const packedEntries = JSON.stringify(entryDefs);
+          const packedBlobs = packBlobs(imageBlobs);
+          return buildMsFile(state.msFileName, state.msSalt, packedEntries, packedBlobs, isV2 ? 2 : 1);
         });
         downloadBlob(result, state.msFileName);
         break;

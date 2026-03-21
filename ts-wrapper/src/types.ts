@@ -182,6 +182,7 @@ export interface WasmExports {
     salt: string,
     entryName: string,
     entryKey: Uint8Array,
+    version: number,
   ): Uint8Array;
   // ── Encoding ──────────────────────────────────────────────────────
   encodePixels(rgba: Uint8Array, width: number, height: number, formatId: number): Uint8Array;
@@ -227,5 +228,6 @@ export interface WasmExports {
     salt: string,
     entriesJson: string,
     imageBlobs: Uint8Array,
+    version: number,
   ): Uint8Array;
 }

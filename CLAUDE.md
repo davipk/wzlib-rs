@@ -52,14 +52,14 @@ cargo llvm-cov --lib --html   # HTML coverage report
   - `image.rs` — IMG property tree parsing, produces `WzProperty` enum (16 variants: Null, Short, Int, Long, Float, Double, String, SubProperty, Canvas, Convex, Sound, Vector, Uol, Lua, RawData, Video).
   - `image_writer.rs` — IMG property tree serialization (counterpart to `image.rs`). `write_image()` serializes a property tree to WZ binary. Handles all 16 property types including the 0x09 extended envelope for SubProperty, Canvas, Vector, Convex, Sound, UOL, RawData, Video.
   - `list_file.rs` — List.wz parser (pre-Big Bang path index). Different binary format: `[i32 len][u16 chars × len][u16 null]` entries, XOR-encrypted with WZ key (no incremental mask).
-  - `ms_file.rs` — v220+ `.ms` archive parsing and saving. Two format versions: **v1** (Snow2 stream cipher, version byte 2) and **v2** (ChaCha20 stream cipher, version byte 4). `parse_ms_file()` auto-detects v1/v2. `decrypt_entry_data()` dispatches decryption by version. V2 uses `ChaCha20StreamReader` for entry tables (counter-resetting per 64-byte block) and only encrypts the first 1024 bytes of each entry. **Writing:** `save_ms_file()` always produces v1/Snow2 format (v2 writing is not yet implemented). V2 files are decoded and re-saved as v1.
+  - `ms_file.rs` — v220+ `.ms` archive parsing and saving. Two format versions: **v1** (Snow2 stream cipher, version byte 2) and **v2** (ChaCha20 stream cipher, version byte 4). `parse_ms_file()` auto-detects v1/v2. `decrypt_entry_data()` dispatches decryption by version. `encrypt_entry_data()` and `build_ms_file()` accept an `MsVersion` parameter to select v1 or v2. V2 uses `ChaCha20StreamReader`/`ChaCha20StreamWriter` for entry tables (counter-resetting per 64-byte block) and only encrypts the first 1024 bytes of each entry. V2 salt encoding uses a `((a|0x4B)<<1)-a-75` transform with sign-extended high bytes. V2 header hash formula: `hashed_salt_len + raw_version_byte + 4 + entry_count + salt_u16_sum`.
   - `properties/mod.rs` — `WzProperty` enum definition, serialization, and accessor helpers (`as_int`, `as_float`, `as_str`, `children`, `get`).
   - `test_utils.rs` — Shared test helpers: `dummy_header()`, `make_reader()`, WZ encoding helpers (`encode_wz_ascii()`, `encode_wz_offset()`), image data builders. Used across `binary_reader`, `binary_writer`, `directory`, `image`, and `image_writer` tests.
 - **`image/`** — Pixel format decoders and encoders. `pixel.rs`/`dxt.rs` decode to RGBA8888; `encode.rs` encodes RGBA8888 back to WZ formats (BGRA4444, BGRA8888, ARGB1555, RGB565, R16, A8, RGBA1010102, RGBA32Float) and zlib-compresses raw data via `compress_png_data()`. DXT/BC encoding is not supported — use BGRA8888 for imported images.
 
 ### TypeScript Wrapper (`ts-wrapper/src/`)
 
-- **`wz-parser.ts`** — `WzParser` class: loads WASM, exposes parse methods (`parseFile()`, `parseHotfixFile()`, etc.), auto-detection (`detectMapleVersion()`), **edit-friendly parsing** (`parseImageForEdit()`, `parseHotfixForEdit()`, `parseMsImageForEdit()`), **pixel encoding** (`encodePixels()`, `compressPng()`), **build APIs** (`buildImage()`, `buildFile()`, `buildMsFile()`), and `encryptMsEntry()` utility. Module-private `packBlobs`/`unpackEditResult` helpers handle the packed binary format. The build APIs are the single path for all saving — parse-for-edit → modify → build. All parse/build methods accept optional `customIv` for user-provided encryption keys.
+- **`wz-parser.ts`** — `WzParser` class: loads WASM, exposes parse methods (`parseFile()`, `parseHotfixFile()`, etc.), auto-detection (`detectMapleVersion()`), **edit-friendly parsing** (`parseImageForEdit()`, `parseHotfixForEdit()`, `parseMsImageForEdit()`), **pixel encoding** (`encodePixels()`, `compressPng()`), **build APIs** (`buildImage()`, `buildFile()`, `buildMsFile(version)`), and `encryptMsEntry(version)` utility. `buildMsFile` and `encryptMsEntry` accept a `version` number (1 = Snow2, 2 = ChaCha20, default 1). Module-private `packBlobs`/`unpackEditResult` helpers handle the packed binary format. The build APIs are the single path for all saving — parse-for-edit → modify → build. All parse/build methods accept optional `customIv` for user-provided encryption keys.
 - **`wz-node.ts`** — `WzNode` class: tree navigation with `getChild()`, `resolve()`, `walk()`. Slash-separated paths (e.g., `"0/info/icon"`).
 - **`types.ts`** — `WzMapleVersion` (includes `'custom'`), `WzFileType`, `WzPngFormat`, `WzPropertyNode` (with optional `blobIndex`), `WasmExports` interface, `McvHeaderInfo`, `MsBuildEntry`, directory tree types.
 
@@ -71,7 +71,7 @@ Browser-based WZ file viewer/editor. Modular JS in `demo/js/`:
 - **`tree-view.js`** — Directory tree rendering
 - **`property-view.js`** — Property panel rendering for selected nodes
 - **`media.js`** — Canvas image display and sound/video playback
-- **`save.js`** — Save operations via parse-for-edit + build APIs: `saveCurrentFile()` (full file), `saveCurrentImage()` / `saveCurrentMsImage()` (single image extraction)
+- **`save.js`** — Save operations via parse-for-edit + build APIs: `saveCurrentFile()` (full file), `saveCurrentImage()` / `saveCurrentMsImage()` (single image extraction). MS files are saved in their original format (v1 or v2) based on `state.msVersion`.
 - **`state.js`** — Shared application state
 - **`utils.js`** — DOM helpers, formatting utilities
 
@@ -94,14 +94,14 @@ Browser-based WZ file viewer/editor. Modular JS in `demo/js/`:
 3. For new Canvas: `encodePixels()` (RGBA → format) + `compressPngData()` (zlib) → new blob
 4. `buildWzImage()` → accepts modified JSON + blobs → serialized WZ image binary
 5. `buildWzFile()` → accepts directory tree JSON + per-image serialized blobs + version/encryption params → complete `.wz` file
-6. `buildMsFile()` → same pattern for `.ms` files
+6. `buildMsFile(version)` → same pattern for `.ms` files; version 1 = Snow2, 2 = ChaCha20
 
 **Internal three-phase save (inside Rust, ported from MapleLib's `SaveToDisk`):**
 1. Serialize each image's property tree to binary via `write_image()`, compute checksums
 2. `get_offsets()` + `get_img_offsets()` — walk directory tree assigning byte positions
 3. Write header → encrypted directory entries → image data blocks into a single buffer
 
-**MS file internals:** Two versions: **v1** uses Snow2 (double-encrypted first 1024 bytes per entry), **v2** uses ChaCha20 (only first 1024 bytes encrypted, with a `chacha20KeyObscure` XOR mask on all keys). `parse_ms_file()` auto-detects by checking the version byte. `decrypt_entry_data()` dispatches to `decrypt_entry_v1()` or `decrypt_entry_v2()`. Saving always uses v1/Snow2 via `save_ms_file()` — v2 files are decoded and re-saved as v1.
+**MS file internals:** Two versions: **v1** uses Snow2 (double-encrypted first 1024 bytes per entry), **v2** uses ChaCha20 (only first 1024 bytes encrypted, with a `chacha20KeyObscure` XOR mask on all keys). All public APIs are unified: `parse_ms_file()` auto-detects version, `decrypt_entry_data()` dispatches by parsed version, `encrypt_entry_data(version)` and `build_ms_file(version)` accept `MsVersion::V1` or `V2`. WASM exports use a numeric `version` param (1 or 2). Internally, v1 uses `Snow2` directly for entry tables; v2 uses `ChaCha20StreamReader`/`ChaCha20StreamWriter` which process 64-byte blocks with counter resets on block boundaries.
 
 ## Key Patterns
 
