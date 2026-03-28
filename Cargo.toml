@@ -11,7 +11,7 @@ categories = ["parser-implementations", "game-development"]
 exclude = ["ts-wrapper/", "demo/", ".github/"]
 
 [lib]
-crate-type = ["rlib"]
+crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
