@@ -4,9 +4,14 @@ version = "0.1.0"
 edition = "2021"
 description = "MapleStory WZ file parser — Rust core with optional WASM bindings"
 license = "MIT"
+repository = "https://github.com/spd789562/wzlib-rs"
+readme = "README.md"
+keywords = ["maplestory", "wz", "parser", "wzlib"]
+categories = ["parser-implementations", "game-development"]
+exclude = ["ts-wrapper/", "demo/", ".github/"]
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [features]
 default = []
