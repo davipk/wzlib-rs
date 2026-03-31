@@ -1,6 +1,6 @@
 [package]
 name = "wzlib-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "MapleStory WZ file parser — Rust core with optional WASM bindings"
 license = "MIT"

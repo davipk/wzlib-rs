@@ -156,6 +156,8 @@ fn expand_alpha_dxt5(data: &[u8]) -> [u8; 16] {
     alpha
 }
 
+// Always 4-color interpolation — the 3-color mode with transparent black
+// (when c0 <= c1) is DXT1-only; DXT3/DXT5 store alpha separately.
 fn expand_color_table(c0_lo: u8, c0_hi: u8, c1_lo: u8, c1_hi: u8) -> [(u8, u8, u8); 4] {
     let c0_raw = u16::from_le_bytes([c0_lo, c0_hi]);
     let c1_raw = u16::from_le_bytes([c1_lo, c1_hi]);
@@ -163,31 +165,20 @@ fn expand_color_table(c0_lo: u8, c0_hi: u8, c1_lo: u8, c1_hi: u8) -> [(u8, u8, u
     let (r0, g0, b0) = rgb565_decode(c0_raw);
     let (r1, g1, b1) = rgb565_decode(c1_raw);
 
-    let mut colors = [(0u8, 0u8, 0u8); 4];
-    colors[0] = (r0, g0, b0);
-    colors[1] = (r1, g1, b1);
-
-    if c0_raw > c1_raw {
-        colors[2] = (
+    [
+        (r0, g0, b0),
+        (r1, g1, b1),
+        (
             ((r0 as u16 * 2 + r1 as u16 + 1) / 3) as u8,
             ((g0 as u16 * 2 + g1 as u16 + 1) / 3) as u8,
             ((b0 as u16 * 2 + b1 as u16 + 1) / 3) as u8,
-        );
-        colors[3] = (
+        ),
+        (
             ((r0 as u16 + r1 as u16 * 2 + 1) / 3) as u8,
             ((g0 as u16 + g1 as u16 * 2 + 1) / 3) as u8,
             ((b0 as u16 + b1 as u16 * 2 + 1) / 3) as u8,
-        );
-    } else {
-        colors[2] = (
-            ((r0 as u16 + r1 as u16) / 2) as u8,
-            ((g0 as u16 + g1 as u16) / 2) as u8,
-            ((b0 as u16 + b1 as u16) / 2) as u8,
-        );
-        colors[3] = (0, 0, 0);
-    }
-
-    colors
+        ),
+    ]
 }
 
 fn expand_color_indices(data: &[u8]) -> [u8; 16] {
@@ -324,12 +315,25 @@ mod tests {
 
     #[test]
     fn test_expand_color_table_equal_endpoints() {
-        // c0=0x0000, c1=0x0000 → c0 <= c1 → 3-color mode, colors[3]=(0,0,0)
+        // c0=c1=0x0000 → all interpolated colors are also (0,0,0)
         let colors = expand_color_table(0x00, 0x00, 0x00, 0x00);
         assert_eq!(colors[0], (0, 0, 0));
         assert_eq!(colors[1], (0, 0, 0));
         assert_eq!(colors[2], (0, 0, 0));
         assert_eq!(colors[3], (0, 0, 0));
+    }
+
+    #[test]
+    fn test_expand_color_table_always_4color() {
+        // c0 < c1 — previously would have used 3-color mode with black for index 3.
+        // Now always uses 4-color interpolation since this is only used for DXT3/DXT5.
+        // c0=0x0000 (black), c1=0xFFFF (white)
+        let colors = expand_color_table(0x00, 0x00, 0xFF, 0xFF);
+        assert_eq!(colors[0], (0, 0, 0));     // c0 = black
+        assert_eq!(colors[1], (0xFF, 0xFF, 0xFF)); // c1 = white
+        // color2 = (0*2+255+1)/3 = 85, color3 = (0+255*2+1)/3 = 170 (NOT black)
+        assert_eq!(colors[2], (85, 85, 85));
+        assert_eq!(colors[3], (170, 170, 170));
     }
 
     // ── decompress_dxt5 ────────────────────────────────────────────
