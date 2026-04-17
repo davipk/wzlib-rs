@@ -10,7 +10,7 @@ use super::error::{WzError, WzResult};
 use super::header::WzHeader;
 use super::image::parse_image;
 use super::properties::WzProperty;
-use super::types::{WzDirectoryType, WzMapleVersion};
+use super::types::WzMapleVersion;
 
 const WZ_VERSION_HEADER_64BIT_START: u16 = 770;
 const WZ_HEADER_MAGIC: [u8; 4] = *b"PKG1";
