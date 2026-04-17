@@ -5,11 +5,17 @@
 use crate::wz::error::{WzError, WzResult};
 
 /// Validates input length and allocates the RGBA output buffer.
-fn init_rgba(data: &[u8], pixel_count: usize, bytes_per_pixel: usize, format: &str) -> WzResult<Vec<u8>> {
+fn init_rgba(
+    data: &[u8],
+    pixel_count: usize,
+    bytes_per_pixel: usize,
+    format: &str,
+) -> WzResult<Vec<u8>> {
     if data.len() < pixel_count * bytes_per_pixel {
-        return Err(WzError::DecompressionFailed(
-            format!("{} data too short", format),
-        ));
+        return Err(WzError::DecompressionFailed(format!(
+            "{} data too short",
+            format
+        )));
     }
     Ok(vec![0u8; pixel_count * 4])
 }
@@ -112,19 +118,19 @@ pub fn rgb565_block_to_rgba(data: &[u8], width: u32, height: u32) -> WzResult<Ve
 
 pub fn r16_to_rgba(data: &[u8], pixel_count: usize) -> WzResult<Vec<u8>> {
     convert_pixels(data, pixel_count, 2, "R16", |src, dst| {
-        dst[0] = src[1];  // R (high byte of 16-bit)
-        dst[1] = 0;       // G
-        dst[2] = 0;       // B
-        dst[3] = 0xFF;    // A
+        dst[0] = src[1]; // R (high byte of 16-bit)
+        dst[1] = 0; // G
+        dst[2] = 0; // B
+        dst[3] = 0xFF; // A
     })
 }
 
 pub fn a8_to_rgba(data: &[u8], pixel_count: usize) -> WzResult<Vec<u8>> {
     convert_pixels(data, pixel_count, 1, "A8", |src, dst| {
-        dst[0] = 0xFF;    // R
-        dst[1] = 0xFF;    // G
-        dst[2] = 0xFF;    // B
-        dst[3] = src[0];  // A
+        dst[0] = 0xFF; // R
+        dst[1] = 0xFF; // G
+        dst[2] = 0xFF; // B
+        dst[3] = src[0]; // A
     })
 }
 
@@ -252,7 +258,7 @@ mod tests {
         // A=1, R=0, G=0, B=0 → 0x8000
         let rgba = argb1555_to_rgba(&[0x00, 0x80], 1).unwrap();
         assert_eq!(rgba[3], 0xFF); // alpha on
-        assert_eq!(rgba[0], 0);    // R=0
+        assert_eq!(rgba[0], 0); // R=0
     }
 
     #[test]
@@ -381,7 +387,7 @@ mod tests {
             .collect();
         let rgba = rgba32float_to_rgba(&data, 1).unwrap();
         assert_eq!(rgba[0], 255); // clamped to 1.0
-        assert_eq!(rgba[1], 0);   // clamped to 0.0
+        assert_eq!(rgba[1], 0); // clamped to 0.0
         assert_eq!(rgba[2], 127); // 0.5 * 255 = 127
         assert_eq!(rgba[3], 255); // clamped to 1.0
     }

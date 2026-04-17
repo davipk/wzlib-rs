@@ -48,7 +48,10 @@ fn to_json_string(value: &impl serde::Serialize) -> Result<String, JsError> {
 // ── JSON serialization ──────────────────────────────────────────────
 
 fn children_to_json(props: &[(String, WzProperty)]) -> Vec<serde_json::Value> {
-    props.iter().map(|(n, p)| prop_to_json(n, p, None)).collect()
+    props
+        .iter()
+        .map(|(n, p)| prop_to_json(n, p, None))
+        .collect()
 }
 
 // When `blobs` is Some, binary data (Canvas png_data, Sound header+audio, etc.)
@@ -75,7 +78,14 @@ fn prop_to_json(
             let children = children_to_json_inner(properties, blobs);
             json!({ "name": name, "type": "SubProperty", "children": children })
         }
-        WzProperty::Canvas { width, height, format, properties, png_data, .. } => {
+        WzProperty::Canvas {
+            width,
+            height,
+            format,
+            properties,
+            png_data,
+            ..
+        } => {
             let children = children_to_json_inner(properties, blobs.as_deref_mut());
             let mut obj = json!({
                 "name": name,
@@ -100,7 +110,11 @@ fn prop_to_json(
                 .collect();
             json!({ "name": name, "type": "Convex", "children": pts })
         }
-        WzProperty::Sound { duration_ms, data, header } => {
+        WzProperty::Sound {
+            duration_ms,
+            data,
+            header,
+        } => {
             let mut obj = json!({ "name": name, "type": "Sound", "duration_ms": duration_ms });
             if let Some(blobs) = blobs {
                 obj["blobIndex"] = json!(blobs.len());
@@ -120,7 +134,11 @@ fn prop_to_json(
             }
             obj
         }
-        WzProperty::RawData { raw_type, properties, data } => {
+        WzProperty::RawData {
+            raw_type,
+            properties,
+            data,
+        } => {
             let children = children_to_json_inner(properties, blobs.as_deref_mut());
             let mut obj = json!({ "name": name, "type": "RawData", "rawDataType": raw_type });
             if !children.is_empty() {
@@ -134,7 +152,14 @@ fn prop_to_json(
             }
             obj
         }
-        WzProperty::Video { video_type, properties, data_length, mcv_header, video_data, .. } => {
+        WzProperty::Video {
+            video_type,
+            properties,
+            data_length,
+            mcv_header,
+            video_data,
+            ..
+        } => {
             let children = children_to_json_inner(properties, blobs.as_deref_mut());
             let mut obj = json!({
                 "name": name,
@@ -169,7 +194,10 @@ fn children_to_json_inner(
     props: &[(String, WzProperty)],
     mut blobs: Option<&mut Vec<Vec<u8>>>,
 ) -> Vec<serde_json::Value> {
-    props.iter().map(|(n, p)| prop_to_json(n, p, blobs.as_deref_mut())).collect()
+    props
+        .iter()
+        .map(|(n, p)| prop_to_json(n, p, blobs.as_deref_mut()))
+        .collect()
 }
 
 // ── Property tree traversal & extraction ────────────────────────────
@@ -218,7 +246,13 @@ fn find_property<'a>(
 
 fn decode_canvas(prop: &WzProperty, iv: &[u8; 4]) -> Result<Vec<u8>, JsError> {
     match prop {
-        WzProperty::Canvas { width, height, format, png_data, .. } => {
+        WzProperty::Canvas {
+            width,
+            height,
+            format,
+            png_data,
+            ..
+        } => {
             let wz_key = crypto::aes_encryption::generate_wz_key(iv, 0x10000, None);
             let raw = image::decompress_png_data(png_data, Some(&wz_key))
                 .map_err(|e| JsError::new(&format!("Decompress failed: {}", e)))?;
@@ -243,10 +277,13 @@ fn extract_sound(prop: &WzProperty, _iv: &[u8; 4]) -> Result<Vec<u8>, JsError> {
 
 fn extract_video(prop: &WzProperty, _iv: &[u8; 4]) -> Result<Vec<u8>, JsError> {
     match prop {
-        WzProperty::Video { video_data: Some(data), .. } => Ok(data.clone()),
-        WzProperty::Video { video_data: None, .. } => {
-            Err(JsError::new("Video property has no video_data loaded"))
-        }
+        WzProperty::Video {
+            video_data: Some(data),
+            ..
+        } => Ok(data.clone()),
+        WzProperty::Video {
+            video_data: None, ..
+        } => Err(JsError::new("Video property has no video_data loaded")),
         _ => Err(JsError::new("Property at path is not a Video")),
     }
 }
@@ -314,8 +351,7 @@ pub fn maple_custom_decrypt(data: &mut [u8]) {
 
 #[wasm_bindgen(js_name = "decompressPngData")]
 pub fn decompress_png_data(compressed: &[u8], wz_key: Option<Vec<u8>>) -> Result<Vec<u8>, JsError> {
-    image::decompress_png_data(compressed, wz_key.as_deref())
-        .to_js_err()
+    image::decompress_png_data(compressed, wz_key.as_deref()).to_js_err()
 }
 
 #[wasm_bindgen(js_name = "decodePixels")]
@@ -349,11 +385,11 @@ fn parse_image_props(
     img_offset: u32,
     version_hash: u32,
 ) -> Result<(Vec<(String, WzProperty)>, [u8; 4]), JsError> {
-    use std::io::Cursor;
     use crate::wz::binary_reader::WzBinaryReader;
     use crate::wz::file::{detect_file_type, WzFileType};
     use crate::wz::header::WzHeader;
     use crate::wz::image::parse_image;
+    use std::io::Cursor;
 
     let is_hotfix = detect_file_type(wz_data) == WzFileType::HotfixDataWz;
 
@@ -369,7 +405,8 @@ fn parse_image_props(
     if !is_hotfix && (img_offset as usize) >= wz_data.len() {
         return Err(JsError::new(&format!(
             "Image offset 0x{:X} is past end of file (size 0x{:X})",
-            img_offset, wz_data.len()
+            img_offset,
+            wz_data.len()
         )));
     }
 
@@ -377,11 +414,9 @@ fn parse_image_props(
     if !is_hotfix {
         reader.hash = version_hash;
     }
-    reader.seek(actual_offset)
-        .to_js_err()?;
+    reader.seek(actual_offset).to_js_err()?;
 
-    let props = parse_image(&mut reader)
-        .to_js_err()?;
+    let props = parse_image(&mut reader).to_js_err()?;
     let detected_iv = reader.wz_key.iv();
     Ok((props, detected_iv))
 }
@@ -427,48 +462,93 @@ pub fn parse_wz_image(
 }
 
 #[wasm_bindgen(js_name = "parseWzListFile")]
-pub fn parse_wz_list_file(data: &[u8], version_name: &str, custom_iv: Option<Vec<u8>>) -> Result<String, JsError> {
+pub fn parse_wz_list_file(
+    data: &[u8],
+    version_name: &str,
+    custom_iv: Option<Vec<u8>>,
+) -> Result<String, JsError> {
     let iv = resolve_iv(version_name, custom_iv)?;
-    let entries = crate::wz::list_file::parse_list_file_with_iv(data, iv)
-        .to_js_err()?;
+    let entries = crate::wz::list_file::parse_list_file_with_iv(data, iv).to_js_err()?;
 
     to_json_string(&entries)
 }
 
 #[wasm_bindgen(js_name = "parseHotfixDataWz")]
-pub fn parse_hotfix_data_wz(data: &[u8], version_name: &str, custom_iv: Option<Vec<u8>>) -> Result<String, JsError> {
+pub fn parse_hotfix_data_wz(
+    data: &[u8],
+    version_name: &str,
+    custom_iv: Option<Vec<u8>>,
+) -> Result<String, JsError> {
     let iv = resolve_iv(version_name, custom_iv)?;
 
-    let properties = crate::wz::file::parse_hotfix_data_wz(data, iv)
-        .to_js_err()?;
+    let properties = crate::wz::file::parse_hotfix_data_wz(data, iv).to_js_err()?;
     to_json_string(&children_to_json(&properties))
 }
 
 #[wasm_bindgen(js_name = "decodeWzCanvas")]
 pub fn decode_wz_canvas(
-    wz_data: &[u8], version_name: &str, img_offset: u32, version_hash: u32,
-    prop_path: &str, custom_iv: Option<Vec<u8>>,
+    wz_data: &[u8],
+    version_name: &str,
+    img_offset: u32,
+    version_hash: u32,
+    prop_path: &str,
+    custom_iv: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, JsError> {
-    extract_wz_prop(wz_data, version_name, img_offset, version_hash, prop_path, custom_iv,
-        "Canvas", &|p| matches!(p, WzProperty::Canvas { .. }), &decode_canvas)
+    extract_wz_prop(
+        wz_data,
+        version_name,
+        img_offset,
+        version_hash,
+        prop_path,
+        custom_iv,
+        "Canvas",
+        &|p| matches!(p, WzProperty::Canvas { .. }),
+        &decode_canvas,
+    )
 }
 
 #[wasm_bindgen(js_name = "extractWzSound")]
 pub fn extract_wz_sound(
-    wz_data: &[u8], version_name: &str, img_offset: u32, version_hash: u32,
-    prop_path: &str, custom_iv: Option<Vec<u8>>,
+    wz_data: &[u8],
+    version_name: &str,
+    img_offset: u32,
+    version_hash: u32,
+    prop_path: &str,
+    custom_iv: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, JsError> {
-    extract_wz_prop(wz_data, version_name, img_offset, version_hash, prop_path, custom_iv,
-        "Sound", &|p| matches!(p, WzProperty::Sound { .. }), &extract_sound)
+    extract_wz_prop(
+        wz_data,
+        version_name,
+        img_offset,
+        version_hash,
+        prop_path,
+        custom_iv,
+        "Sound",
+        &|p| matches!(p, WzProperty::Sound { .. }),
+        &extract_sound,
+    )
 }
 
 #[wasm_bindgen(js_name = "extractWzVideo")]
 pub fn extract_wz_video(
-    wz_data: &[u8], version_name: &str, img_offset: u32, version_hash: u32,
-    prop_path: &str, custom_iv: Option<Vec<u8>>,
+    wz_data: &[u8],
+    version_name: &str,
+    img_offset: u32,
+    version_hash: u32,
+    prop_path: &str,
+    custom_iv: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, JsError> {
-    extract_wz_prop(wz_data, version_name, img_offset, version_hash, prop_path, custom_iv,
-        "Video", &|p| matches!(p, WzProperty::Video { .. }), &extract_video)
+    extract_wz_prop(
+        wz_data,
+        version_name,
+        img_offset,
+        version_hash,
+        prop_path,
+        custom_iv,
+        "Video",
+        &|p| matches!(p, WzProperty::Video { .. }),
+        &extract_video,
+    )
 }
 
 // ── MS file parsing exports ─────────────────────────────────────────
@@ -478,17 +558,15 @@ fn parse_ms_image_props(
     file_name: &str,
     entry_index: u32,
 ) -> Result<Vec<(String, WzProperty)>, JsError> {
-    use std::io::Cursor;
     use crate::wz::binary_reader::WzBinaryReader;
     use crate::wz::header::WzHeader;
     use crate::wz::image::parse_image;
+    use std::io::Cursor;
 
-    let parsed = crate::wz::ms_file::parse_ms_file(data, file_name)
-        .to_js_err()?;
+    let parsed = crate::wz::ms_file::parse_ms_file(data, file_name).to_js_err()?;
 
     let decrypted =
-        crate::wz::ms_file::decrypt_entry_data(data, &parsed, entry_index as usize)
-            .to_js_err()?;
+        crate::wz::ms_file::decrypt_entry_data(data, &parsed, entry_index as usize).to_js_err()?;
 
     let iv = WzMapleVersion::Bms.iv();
     let cursor = Cursor::new(decrypted);
@@ -499,8 +577,7 @@ fn parse_ms_image_props(
 
 #[wasm_bindgen(js_name = "parseMsFile")]
 pub fn parse_ms_file(data: &[u8], file_name: &str) -> Result<String, JsError> {
-    let parsed = crate::wz::ms_file::parse_ms_file(data, file_name)
-        .to_js_err()?;
+    let parsed = crate::wz::ms_file::parse_ms_file(data, file_name).to_js_err()?;
 
     let entries: Vec<serde_json::Value> = parsed
         .entries
@@ -530,37 +607,63 @@ pub fn parse_ms_file(data: &[u8], file_name: &str) -> Result<String, JsError> {
 }
 
 #[wasm_bindgen(js_name = "parseMsImage")]
-pub fn parse_ms_image(
-    data: &[u8],
-    file_name: &str,
-    entry_index: u32,
-) -> Result<String, JsError> {
+pub fn parse_ms_image(data: &[u8], file_name: &str, entry_index: u32) -> Result<String, JsError> {
     let props = parse_ms_image_props(data, file_name, entry_index)?;
     to_json_string(&children_to_json(&props))
 }
 
 #[wasm_bindgen(js_name = "decodeMsCanvas")]
 pub fn decode_ms_canvas(
-    data: &[u8], file_name: &str, entry_index: u32, prop_path: &str,
+    data: &[u8],
+    file_name: &str,
+    entry_index: u32,
+    prop_path: &str,
 ) -> Result<Vec<u8>, JsError> {
-    extract_ms_prop(data, file_name, entry_index, prop_path,
-        "Canvas", &|p| matches!(p, WzProperty::Canvas { .. }), &decode_canvas)
+    extract_ms_prop(
+        data,
+        file_name,
+        entry_index,
+        prop_path,
+        "Canvas",
+        &|p| matches!(p, WzProperty::Canvas { .. }),
+        &decode_canvas,
+    )
 }
 
 #[wasm_bindgen(js_name = "extractMsSound")]
 pub fn extract_ms_sound(
-    data: &[u8], file_name: &str, entry_index: u32, prop_path: &str,
+    data: &[u8],
+    file_name: &str,
+    entry_index: u32,
+    prop_path: &str,
 ) -> Result<Vec<u8>, JsError> {
-    extract_ms_prop(data, file_name, entry_index, prop_path,
-        "Sound", &|p| matches!(p, WzProperty::Sound { .. }), &extract_sound)
+    extract_ms_prop(
+        data,
+        file_name,
+        entry_index,
+        prop_path,
+        "Sound",
+        &|p| matches!(p, WzProperty::Sound { .. }),
+        &extract_sound,
+    )
 }
 
 #[wasm_bindgen(js_name = "extractMsVideo")]
 pub fn extract_ms_video(
-    data: &[u8], file_name: &str, entry_index: u32, prop_path: &str,
+    data: &[u8],
+    file_name: &str,
+    entry_index: u32,
+    prop_path: &str,
 ) -> Result<Vec<u8>, JsError> {
-    extract_ms_prop(data, file_name, entry_index, prop_path,
-        "Video", &|p| matches!(p, WzProperty::Video { .. }), &extract_video)
+    extract_ms_prop(
+        data,
+        file_name,
+        entry_index,
+        prop_path,
+        "Video",
+        &|p| matches!(p, WzProperty::Video { .. }),
+        &extract_video,
+    )
 }
 
 // ── Version detection ───────────────────────────────────────────────
@@ -572,7 +675,10 @@ const CANDIDATES: [(&str, WzMapleVersion); 3] = [
 ];
 
 fn printable_rate(s: &str) -> (usize, usize) {
-    let recognized = s.chars().filter(|&c| ('\x20'..='\x7E').contains(&c)).count();
+    let recognized = s
+        .chars()
+        .filter(|&c| ('\x20'..='\x7E').contains(&c))
+        .count();
     (recognized, s.len())
 }
 
@@ -583,7 +689,11 @@ fn aggregate_printable_rate<'a>(names: impl Iterator<Item = &'a str>) -> f64 {
         recognized += r;
         total += t;
     }
-    if total == 0 { 0.0 } else { recognized as f64 / total as f64 }
+    if total == 0 {
+        0.0
+    } else {
+        recognized as f64 / total as f64
+    }
 }
 
 fn detect_best_candidate<T>(
@@ -632,7 +742,9 @@ fn detect_standard_version(data: &[u8]) -> Result<String, JsError> {
         |f| {
             let dir = &f.directory;
             aggregate_printable_rate(
-                dir.subdirectories.iter().map(|s| s.name.as_str())
+                dir.subdirectories
+                    .iter()
+                    .map(|s| s.name.as_str())
                     .chain(dir.images.iter().map(|i| i.name.as_str())),
             )
         },
@@ -707,7 +819,13 @@ pub fn encrypt_ms_entry(
     }
     let mut key = [0u8; 16];
     key.copy_from_slice(entry_key);
-    Ok(crate::wz::ms_file::encrypt_entry_data(data, salt, entry_name, &key, version.into()))
+    Ok(crate::wz::ms_file::encrypt_entry_data(
+        data,
+        salt,
+        entry_name,
+        &key,
+        version.into(),
+    ))
 }
 
 // ── Image encoding exports ──────────────────────────────────────────
@@ -742,7 +860,12 @@ pub fn compress_png_data(raw: &[u8]) -> Result<Vec<u8>, JsError> {
 // For Sound nodes, the blob format is: [header_len: u32 LE][header][audio_data]
 
 fn read_u32_le(buf: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes([buf[offset], buf[offset + 1], buf[offset + 2], buf[offset + 3]])
+    u32::from_le_bytes([
+        buf[offset],
+        buf[offset + 1],
+        buf[offset + 2],
+        buf[offset + 3],
+    ])
 }
 
 fn pack_blobs(blobs: &[Vec<u8>]) -> Vec<u8> {
@@ -809,9 +932,7 @@ fn pack_editable_result(json_str: &str, blobs: &[Vec<u8>]) -> Vec<u8> {
     buf
 }
 
-fn props_to_packed_editable(
-    props: &[(String, WzProperty)],
-) -> Result<Vec<u8>, JsError> {
+fn props_to_packed_editable(props: &[(String, WzProperty)]) -> Result<Vec<u8>, JsError> {
     let mut blobs = Vec::new();
     let json_nodes = children_to_json_inner(props, Some(&mut blobs));
     let json_str = to_json_string(&json_nodes)?;
@@ -829,15 +950,29 @@ fn json_array_to_properties(
         .collect()
 }
 
-fn get_blob<'a>(node: &serde_json::Value, blobs: &'a [&[u8]], type_name: &str) -> Result<&'a [u8], JsError> {
-    let idx = node["blobIndex"].as_u64()
-        .ok_or_else(|| JsError::new(&format!("{type_name} node missing 'blobIndex'")))? as usize;
-    blobs.get(idx).copied()
-        .ok_or_else(|| JsError::new(&format!("{type_name} blobIndex {idx} out of range (have {} blobs)", blobs.len())))
+fn get_blob<'a>(
+    node: &serde_json::Value,
+    blobs: &'a [&[u8]],
+    type_name: &str,
+) -> Result<&'a [u8], JsError> {
+    let idx = node["blobIndex"]
+        .as_u64()
+        .ok_or_else(|| JsError::new(&format!("{type_name} node missing 'blobIndex'")))?
+        as usize;
+    blobs.get(idx).copied().ok_or_else(|| {
+        JsError::new(&format!(
+            "{type_name} blobIndex {idx} out of range (have {} blobs)",
+            blobs.len()
+        ))
+    })
 }
 
-fn parse_children(node: &serde_json::Value, blobs: &[&[u8]]) -> Result<Vec<(String, WzProperty)>, JsError> {
-    node["children"].as_array()
+fn parse_children(
+    node: &serde_json::Value,
+    blobs: &[&[u8]],
+) -> Result<Vec<(String, WzProperty)>, JsError> {
+    node["children"]
+        .as_array()
         .map(|arr| json_array_to_properties(arr, blobs))
         .transpose()
         .map(|opt| opt.unwrap_or_default())
@@ -848,7 +983,8 @@ fn json_node_to_property(
     blobs: &[&[u8]],
 ) -> Result<(String, WzProperty), JsError> {
     let name = node["name"].as_str().unwrap_or("").to_string();
-    let type_str = node["type"].as_str()
+    let type_str = node["type"]
+        .as_str()
         .ok_or_else(|| JsError::new("Property node missing 'type' field"))?;
 
     let prop = match type_str {
@@ -864,7 +1000,9 @@ fn json_node_to_property(
             x: node["x"].as_i64().unwrap_or(0) as i32,
             y: node["y"].as_i64().unwrap_or(0) as i32,
         },
-        "SubProperty" => WzProperty::SubProperty { properties: parse_children(node, blobs)? },
+        "SubProperty" => WzProperty::SubProperty {
+            properties: parse_children(node, blobs)?,
+        },
         "Canvas" => WzProperty::Canvas {
             width: node["width"].as_i64().unwrap_or(0) as i32,
             height: node["height"].as_i64().unwrap_or(0) as i32,
@@ -873,11 +1011,16 @@ fn json_node_to_property(
             png_data: get_blob(node, blobs, "Canvas")?.to_vec(),
         },
         "Convex" => {
-            let points = node["children"].as_array()
-                .map(|arr| arr.iter()
-                    .enumerate()
-                    .map(|(i, n)| json_node_to_property(n, blobs).map(|(_, p)| (i.to_string(), p)))
-                    .collect::<Result<Vec<_>, _>>())
+            let points = node["children"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .enumerate()
+                        .map(|(i, n)| {
+                            json_node_to_property(n, blobs).map(|(_, p)| (i.to_string(), p))
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
                 .transpose()?
                 .unwrap_or_default();
             WzProperty::Convex { points }
@@ -897,10 +1040,13 @@ fn json_node_to_property(
             data: get_blob(node, blobs, "RawData")?.to_vec(),
         },
         "Video" => {
-            let video_data = node["blobIndex"].as_u64()
+            let video_data = node["blobIndex"]
+                .as_u64()
                 .map(|_| get_blob(node, blobs, "Video").map(|b| b.to_vec()))
                 .transpose()?;
-            let data_length = video_data.as_ref().map(|d| d.len() as u32)
+            let data_length = video_data
+                .as_ref()
+                .map(|d| d.len() as u32)
                 .unwrap_or(node["dataLength"].as_u64().unwrap_or(0) as u32);
             WzProperty::Video {
                 video_type: node["videoType"].as_u64().unwrap_or(0) as u8,
@@ -998,7 +1144,8 @@ pub fn build_wz_file(
     if consumed != blob_slices.len() {
         return Err(JsError::new(&format!(
             "Directory has {} images but {} blobs were provided",
-            consumed, blob_slices.len()
+            consumed,
+            blob_slices.len()
         )));
     }
 
@@ -1047,7 +1194,8 @@ pub fn build_ms_file(
     if entry_defs.len() != blob_slices.len() {
         return Err(JsError::new(&format!(
             "entries_json has {} entries but {} blobs were provided",
-            entry_defs.len(), blob_slices.len()
+            entry_defs.len(),
+            blob_slices.len()
         )));
     }
 
@@ -1056,7 +1204,8 @@ pub fn build_ms_file(
         if def.entry_key.len() != 16 {
             return Err(JsError::new(&format!(
                 "Entry '{}' key must be 16 bytes, got {}",
-                def.name, def.entry_key.len()
+                def.name,
+                def.entry_key.len()
             )));
         }
         let mut key = [0u8; 16];

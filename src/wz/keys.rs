@@ -48,7 +48,6 @@ impl WzKey {
     pub fn iv(&self) -> [u8; 4] {
         self.iv
     }
-
 }
 
 impl std::ops::Index<usize> for WzKey {

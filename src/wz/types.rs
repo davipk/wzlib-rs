@@ -45,21 +45,21 @@ impl TryFrom<u8> for WzDirectoryType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WzPngFormat {
-    Bgra4444,       //    1 — 16-bit, 4 bits per channel
-    Bgra8888,       //    2 — 32-bit, full color + alpha
-    Dxt3Grayscale,  //    3 — DXT3 black/white thumbnails
-    Argb1555,       //  257 — 16-bit, 1-bit binary alpha
-    Rgb565,         //  513 — 16-bit, no alpha
-    Rgb565Block,    //  517 — RGB565 with 16×16 block compression
-    R16,            //  769 — 16-bit single red channel
-    Dxt3,           // 1026 — DXT3/BC2 colored
-    Dxt5,           // 2050 — DXT5/BC3 smooth alpha gradients
-    A8,             // 2304 — 8-bit alpha only
-    Rgba1010102,    // 2562 — 10-bit RGB + 2-bit alpha
-    Dxt1,           // 4097 — DXT1/BC1, 8 bytes per 4×4 block
-    Bc7,            // 4098 — BC7 high-quality RGBA
-    Rgba32Float,    // 4100 — 32-bit float per channel (HDR)
-    Unknown(u32),   //    ? — raw combined value preserved for diagnostics
+    Bgra4444,      //    1 — 16-bit, 4 bits per channel
+    Bgra8888,      //    2 — 32-bit, full color + alpha
+    Dxt3Grayscale, //    3 — DXT3 black/white thumbnails
+    Argb1555,      //  257 — 16-bit, 1-bit binary alpha
+    Rgb565,        //  513 — 16-bit, no alpha
+    Rgb565Block,   //  517 — RGB565 with 16×16 block compression
+    R16,           //  769 — 16-bit single red channel
+    Dxt3,          // 1026 — DXT3/BC2 colored
+    Dxt5,          // 2050 — DXT5/BC3 smooth alpha gradients
+    A8,            // 2304 — 8-bit alpha only
+    Rgba1010102,   // 2562 — 10-bit RGB + 2-bit alpha
+    Dxt1,          // 4097 — DXT1/BC1, 8 bytes per 4×4 block
+    Bc7,           // 4098 — BC7 high-quality RGBA
+    Rgba32Float,   // 4100 — 32-bit float per channel (HDR)
+    Unknown(u32),  //    ? — raw combined value preserved for diagnostics
 }
 
 impl WzPngFormat {
@@ -126,8 +126,10 @@ impl WzPngFormat {
 
         match self {
             // Per-pixel formats (sorted by ID)
-            WzPngFormat::Bgra4444 | WzPngFormat::Argb1555
-            | WzPngFormat::Rgb565 | WzPngFormat::R16 => pixels * 2,
+            WzPngFormat::Bgra4444
+            | WzPngFormat::Argb1555
+            | WzPngFormat::Rgb565
+            | WzPngFormat::R16 => pixels * 2,
             WzPngFormat::Bgra8888 | WzPngFormat::Rgba1010102 => pixels * 4,
             WzPngFormat::Dxt3Grayscale => pixels * 4, // C# allocates w*h*4
             WzPngFormat::A8 => pixels,
@@ -135,7 +137,7 @@ impl WzPngFormat {
             WzPngFormat::Rgb565Block => pixels / 128, // 16×16 blocks, 2 bytes each
 
             // 4×4 block-compressed formats
-            WzPngFormat::Dxt1 => blocks_4x4() * 8,                        //  8 bytes/block
+            WzPngFormat::Dxt1 => blocks_4x4() * 8, //  8 bytes/block
             WzPngFormat::Dxt3 | WzPngFormat::Dxt5 | WzPngFormat::Bc7 => blocks_4x4() * 16, // 16 bytes/block
 
             WzPngFormat::Unknown(_) => 0,
@@ -170,7 +172,12 @@ mod tests {
         for &(id, expected) in ids {
             let parsed = WzPngFormat::from_combined(id);
             assert_eq!(parsed, expected, "from_combined({}) mismatch", id);
-            assert_eq!(parsed.format_id(), id, "format_id() mismatch for {:?}", expected);
+            assert_eq!(
+                parsed.format_id(),
+                id,
+                "format_id() mismatch for {:?}",
+                expected
+            );
         }
     }
 
@@ -200,12 +207,12 @@ mod tests {
     #[test]
     fn test_raw_data_size_per_pixel_formats() {
         // 4×4 = 16 pixels
-        assert_eq!(WzPngFormat::Bgra4444.raw_data_size(4, 4), 32);   // 16 * 2
-        assert_eq!(WzPngFormat::Bgra8888.raw_data_size(4, 4), 64);   // 16 * 4
-        assert_eq!(WzPngFormat::Argb1555.raw_data_size(4, 4), 32);   // 16 * 2
-        assert_eq!(WzPngFormat::Rgb565.raw_data_size(4, 4), 32);     // 16 * 2
-        assert_eq!(WzPngFormat::R16.raw_data_size(4, 4), 32);        // 16 * 2
-        assert_eq!(WzPngFormat::A8.raw_data_size(4, 4), 16);         // 16 * 1
+        assert_eq!(WzPngFormat::Bgra4444.raw_data_size(4, 4), 32); // 16 * 2
+        assert_eq!(WzPngFormat::Bgra8888.raw_data_size(4, 4), 64); // 16 * 4
+        assert_eq!(WzPngFormat::Argb1555.raw_data_size(4, 4), 32); // 16 * 2
+        assert_eq!(WzPngFormat::Rgb565.raw_data_size(4, 4), 32); // 16 * 2
+        assert_eq!(WzPngFormat::R16.raw_data_size(4, 4), 32); // 16 * 2
+        assert_eq!(WzPngFormat::A8.raw_data_size(4, 4), 16); // 16 * 1
         assert_eq!(WzPngFormat::Rgba1010102.raw_data_size(4, 4), 64); // 16 * 4
         assert_eq!(WzPngFormat::Rgba32Float.raw_data_size(4, 4), 256); // 16 * 16
     }
@@ -213,17 +220,17 @@ mod tests {
     #[test]
     fn test_raw_data_size_block_formats() {
         // 4×4 = 1 block
-        assert_eq!(WzPngFormat::Dxt1.raw_data_size(4, 4), 8);   // 1 block * 8
-        assert_eq!(WzPngFormat::Dxt3.raw_data_size(4, 4), 16);  // 1 block * 16
-        assert_eq!(WzPngFormat::Dxt5.raw_data_size(4, 4), 16);  // 1 block * 16
-        assert_eq!(WzPngFormat::Bc7.raw_data_size(4, 4), 16);   // 1 block * 16
+        assert_eq!(WzPngFormat::Dxt1.raw_data_size(4, 4), 8); // 1 block * 8
+        assert_eq!(WzPngFormat::Dxt3.raw_data_size(4, 4), 16); // 1 block * 16
+        assert_eq!(WzPngFormat::Dxt5.raw_data_size(4, 4), 16); // 1 block * 16
+        assert_eq!(WzPngFormat::Bc7.raw_data_size(4, 4), 16); // 1 block * 16
 
         // 8×8 = 4 blocks (2×2)
-        assert_eq!(WzPngFormat::Dxt1.raw_data_size(8, 8), 32);  // 4 * 8
-        assert_eq!(WzPngFormat::Dxt3.raw_data_size(8, 8), 64);  // 4 * 16
+        assert_eq!(WzPngFormat::Dxt1.raw_data_size(8, 8), 32); // 4 * 8
+        assert_eq!(WzPngFormat::Dxt3.raw_data_size(8, 8), 64); // 4 * 16
 
         // Non-multiple of 4: 5×5 → ceil(5/4)=2 → 2×2=4 blocks
-        assert_eq!(WzPngFormat::Dxt1.raw_data_size(5, 5), 32);  // 4 * 8
+        assert_eq!(WzPngFormat::Dxt1.raw_data_size(5, 5), 32); // 4 * 8
     }
 
     #[test]
@@ -235,9 +242,18 @@ mod tests {
 
     #[test]
     fn test_directory_type_valid() {
-        assert_eq!(WzDirectoryType::try_from(1u8), Ok(WzDirectoryType::UnknownType));
-        assert_eq!(WzDirectoryType::try_from(2u8), Ok(WzDirectoryType::RetrieveStringFromOffset));
-        assert_eq!(WzDirectoryType::try_from(3u8), Ok(WzDirectoryType::Directory));
+        assert_eq!(
+            WzDirectoryType::try_from(1u8),
+            Ok(WzDirectoryType::UnknownType)
+        );
+        assert_eq!(
+            WzDirectoryType::try_from(2u8),
+            Ok(WzDirectoryType::RetrieveStringFromOffset)
+        );
+        assert_eq!(
+            WzDirectoryType::try_from(3u8),
+            Ok(WzDirectoryType::Directory)
+        );
         assert_eq!(WzDirectoryType::try_from(4u8), Ok(WzDirectoryType::Image));
     }
 

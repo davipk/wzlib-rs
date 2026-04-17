@@ -141,7 +141,10 @@ fn write_extended_content<W: Write + Seek>(
     writer: &mut WzBinaryWriter<W>,
     prop: &WzProperty,
 ) -> WzResult<()> {
-    use super::{WZ_TYPE_PROPERTY, WZ_TYPE_CANVAS, WZ_TYPE_VECTOR, WZ_TYPE_CONVEX, WZ_TYPE_SOUND, WZ_TYPE_UOL, WZ_TYPE_RAW_DATA, WZ_TYPE_VIDEO};
+    use super::{
+        WZ_TYPE_CANVAS, WZ_TYPE_CONVEX, WZ_TYPE_PROPERTY, WZ_TYPE_RAW_DATA, WZ_TYPE_SOUND,
+        WZ_TYPE_UOL, WZ_TYPE_VECTOR, WZ_TYPE_VIDEO,
+    };
     match prop {
         WzProperty::SubProperty { properties } => {
             writer.write_string_value(WZ_TYPE_PROPERTY, 0x73, 0x1B)?;
@@ -209,7 +212,11 @@ fn write_extended_content<W: Write + Seek>(
             writer.write_string_value(path, 0x00, 0x01)
         }
 
-        WzProperty::RawData { raw_type, properties, data } => {
+        WzProperty::RawData {
+            raw_type,
+            properties,
+            data,
+        } => {
             writer.write_string_value(WZ_TYPE_RAW_DATA, 0x73, 0x1B)?;
             writer.write_u8(*raw_type)?;
             if *raw_type == 1 {
@@ -263,9 +270,7 @@ mod tests {
     use crate::wz::types::WzPngFormat;
     use std::io::Cursor;
 
-    fn write_then_read(
-        properties: Vec<(String, WzProperty)>,
-    ) -> Vec<(String, WzProperty)> {
+    fn write_then_read(properties: Vec<(String, WzProperty)>) -> Vec<(String, WzProperty)> {
         let mut writer = WzBinaryWriter::new(Cursor::new(Vec::new()), [0; 4], dummy_header(0));
         write_image(&mut writer, &properties).unwrap();
         let data = writer.writer.into_inner();
@@ -453,7 +458,7 @@ mod tests {
         // Build a valid sound header: 51 bytes GUID data + 1 byte wav_format_len + wav_format
         let mut header = vec![0u8; 51]; // sound_header GUIDs
         header.push(18); // wav_format_len = 18 (WAVEFORMATEX base size)
-        // WAVEFORMATEX: 18 bytes with cbSize=0 (extra_size at bytes[16..18])
+                         // WAVEFORMATEX: 18 bytes with cbSize=0 (extra_size at bytes[16..18])
         let mut wav = vec![0u8; 18];
         wav[16] = 0; // extra_size low
         wav[17] = 0; // extra_size high
@@ -489,8 +494,7 @@ mod tests {
     #[test]
     fn test_roundtrip_lua() {
         let lua_data = vec![0x1B, 0x4C, 0x75, 0x61]; // fake lua bytecode
-        let props =
-            write_then_read(vec![("Script".into(), WzProperty::Lua(lua_data.clone()))]);
+        let props = write_then_read(vec![("Script".into(), WzProperty::Lua(lua_data.clone()))]);
         assert_eq!(props.len(), 1);
         match &props[0].1 {
             WzProperty::Lua(data) => assert_eq!(data, &lua_data),
@@ -512,7 +516,11 @@ mod tests {
             },
         )]);
         match &props[0].1 {
-            WzProperty::RawData { raw_type, properties, data } => {
+            WzProperty::RawData {
+                raw_type,
+                properties,
+                data,
+            } => {
                 assert_eq!(*raw_type, 0);
                 assert!(properties.is_empty());
                 assert_eq!(data, &raw);
@@ -533,7 +541,11 @@ mod tests {
             },
         )]);
         match &props[0].1 {
-            WzProperty::RawData { raw_type, properties, data } => {
+            WzProperty::RawData {
+                raw_type,
+                properties,
+                data,
+            } => {
                 assert_eq!(*raw_type, 1);
                 assert!(properties.is_empty());
                 assert_eq!(data, &raw);
@@ -557,7 +569,11 @@ mod tests {
             },
         )]);
         match &props[0].1 {
-            WzProperty::RawData { raw_type, properties, data } => {
+            WzProperty::RawData {
+                raw_type,
+                properties,
+                data,
+            } => {
                 assert_eq!(*raw_type, 1);
                 assert_eq!(properties.len(), 2);
                 assert_eq!(properties[0].1.as_int(), Some(100));
@@ -592,7 +608,10 @@ mod tests {
                 assert_eq!(*video_type, 2);
                 assert_eq!(properties.len(), 1);
                 assert_eq!(properties[0].1.as_int(), Some(30));
-                assert_eq!(video_data.as_ref().unwrap(), &vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02]);
+                assert_eq!(
+                    video_data.as_ref().unwrap(),
+                    &vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02]
+                );
             }
             other => panic!("Expected Video, got {:?}", other),
         }

@@ -36,7 +36,9 @@ pub fn decode_pixels(
         //   2 — BGRA8888
         WzPngFormat::Bgra8888 => pixel::bgra8888_to_rgba(&data, pixel_count),
         //   3 — DXT3 grayscale  /  1026 — DXT3 colored
-        WzPngFormat::Dxt3Grayscale | WzPngFormat::Dxt3 => dxt::decompress_dxt3(&data, width, height),
+        WzPngFormat::Dxt3Grayscale | WzPngFormat::Dxt3 => {
+            dxt::decompress_dxt3(&data, width, height)
+        }
         // 257 — ARGB1555
         WzPngFormat::Argb1555 => pixel::argb1555_to_rgba(&data, pixel_count),
         // 513 — RGB565
@@ -140,7 +142,7 @@ mod tests {
         let raw = vec![0xFF; 2 * 2 * 4]; // 16 bytes
         let result = decode_pixels(&raw, 2, 2, WzPngFormat::Bgra8888).unwrap();
         assert_eq!(result.len(), 16); // 2*2*4
-        // After BGRA→RGBA swap, still all 0xFF
+                                      // After BGRA→RGBA swap, still all 0xFF
         assert!(result.iter().all(|&b| b == 0xFF));
     }
 

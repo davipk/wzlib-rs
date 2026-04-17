@@ -58,7 +58,12 @@ pub fn compress_png_data(raw: &[u8]) -> WzResult<Vec<u8>> {
 fn rgba_to_bgra4444(rgba: &[u8], pixel_count: usize) -> Vec<u8> {
     let mut out = vec![0u8; pixel_count * 2];
     for i in 0..pixel_count {
-        let (r, g, b, a) = (rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2], rgba[i * 4 + 3]);
+        let (r, g, b, a) = (
+            rgba[i * 4],
+            rgba[i * 4 + 1],
+            rgba[i * 4 + 2],
+            rgba[i * 4 + 3],
+        );
         let r4 = r >> 4;
         let g4 = g >> 4;
         let b4 = b >> 4;
@@ -73,9 +78,9 @@ fn rgba_to_bgra4444(rgba: &[u8], pixel_count: usize) -> Vec<u8> {
 fn rgba_to_bgra8888(rgba: &[u8], pixel_count: usize) -> Vec<u8> {
     let mut out = vec![0u8; pixel_count * 4];
     for i in 0..pixel_count {
-        out[i * 4] = rgba[i * 4 + 2];     // B
+        out[i * 4] = rgba[i * 4 + 2]; // B
         out[i * 4 + 1] = rgba[i * 4 + 1]; // G
-        out[i * 4 + 2] = rgba[i * 4];     // R
+        out[i * 4 + 2] = rgba[i * 4]; // R
         out[i * 4 + 3] = rgba[i * 4 + 3]; // A
     }
     out
@@ -84,7 +89,12 @@ fn rgba_to_bgra8888(rgba: &[u8], pixel_count: usize) -> Vec<u8> {
 fn rgba_to_argb1555(rgba: &[u8], pixel_count: usize) -> Vec<u8> {
     let mut out = vec![0u8; pixel_count * 2];
     for i in 0..pixel_count {
-        let (r, g, b, a) = (rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2], rgba[i * 4 + 3]);
+        let (r, g, b, a) = (
+            rgba[i * 4],
+            rgba[i * 4 + 1],
+            rgba[i * 4 + 2],
+            rgba[i * 4 + 3],
+        );
         let r5 = (r as u16 >> 3) & 0x1F;
         let g5 = (g as u16 >> 3) & 0x1F;
         let b5 = (b as u16 >> 3) & 0x1F;
@@ -130,7 +140,12 @@ fn rgba_to_a8(rgba: &[u8], pixel_count: usize) -> Vec<u8> {
 fn rgba_to_rgba1010102(rgba: &[u8], pixel_count: usize) -> Vec<u8> {
     let mut out = vec![0u8; pixel_count * 4];
     for i in 0..pixel_count {
-        let (r, g, b, a) = (rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2], rgba[i * 4 + 3]);
+        let (r, g, b, a) = (
+            rgba[i * 4],
+            rgba[i * 4 + 1],
+            rgba[i * 4 + 2],
+            rgba[i * 4 + 3],
+        );
         // 8-bit → 10-bit: (val << 2) | (val >> 6)
         let r10 = ((r as u32) << 2) | ((r as u32) >> 6);
         let g10 = ((g as u32) << 2) | ((g as u32) >> 6);

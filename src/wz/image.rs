@@ -54,7 +54,11 @@ pub fn parse_image<R: Read + Seek>(
                 r.seek(pos_after_header)?;
                 let s = r.read_wz_string()?;
                 let v = r.read_u16()?;
-                if v == 0 { Ok(s) } else { Err(WzError::InvalidImageHeader(0x73)) }
+                if v == 0 {
+                    Ok(s)
+                } else {
+                    Err(WzError::InvalidImageHeader(0x73))
+                }
             })
         }
         0x1B => {
@@ -85,7 +89,10 @@ pub fn parse_property_list<R: Read + Seek>(
 ) -> WzResult<Vec<(String, WzProperty)>> {
     let count = reader.read_compressed_int()?;
     if !(0..=super::MAX_PROPERTY_COUNT).contains(&count) {
-        return Err(WzError::Custom(format!("Invalid property count: {}", count)));
+        return Err(WzError::Custom(format!(
+            "Invalid property count: {}",
+            count
+        )));
     }
     let mut properties = Vec::with_capacity(count as usize);
 
@@ -171,9 +178,7 @@ fn parse_extended_property<R: Read + Seek>(
             let str_offset = reader.read_i32()?;
             reader.read_string_at_offset(offset.wrapping_add(str_offset as i64 as u64))?
         }
-        0x00 | 0x73 => {
-            reader.read_wz_string()?
-        }
+        0x00 | 0x73 => reader.read_wz_string()?,
         _ => {
             return Err(WzError::Custom(format!(
                 "Invalid extended prop type byte: 0x{:02X}",
@@ -182,7 +187,10 @@ fn parse_extended_property<R: Read + Seek>(
         }
     };
 
-    use super::{WZ_TYPE_PROPERTY, WZ_TYPE_CANVAS, WZ_TYPE_VECTOR, WZ_TYPE_CONVEX, WZ_TYPE_SOUND, WZ_TYPE_UOL, WZ_TYPE_RAW_DATA, WZ_TYPE_VIDEO};
+    use super::{
+        WZ_TYPE_CANVAS, WZ_TYPE_CONVEX, WZ_TYPE_PROPERTY, WZ_TYPE_RAW_DATA, WZ_TYPE_SOUND,
+        WZ_TYPE_UOL, WZ_TYPE_VECTOR, WZ_TYPE_VIDEO,
+    };
     match type_str.as_str() {
         WZ_TYPE_PROPERTY => {
             let _padding = reader.read_u16()?;
@@ -201,7 +209,10 @@ fn parse_extended_property<R: Read + Seek>(
         WZ_TYPE_CONVEX => {
             let count = reader.read_compressed_int()?;
             if !(0..=super::MAX_CONVEX_POINTS).contains(&count) {
-                return Err(WzError::Custom(format!("Invalid convex point count: {}", count)));
+                return Err(WzError::Custom(format!(
+                    "Invalid convex point count: {}",
+                    count
+                )));
             }
             let mut points = Vec::with_capacity(count as usize);
             for i in 0..count {
@@ -246,7 +257,11 @@ fn parse_extended_property<R: Read + Seek>(
             };
             let len = reader.read_compressed_int()? as usize;
             let data = reader.read_bytes(len)?;
-            Ok(WzProperty::RawData { raw_type, properties, data })
+            Ok(WzProperty::RawData {
+                raw_type,
+                properties,
+                data,
+            })
         }
 
         WZ_TYPE_VIDEO => {
@@ -274,9 +289,7 @@ fn parse_extended_property<R: Read + Seek>(
             })
         }
 
-        other => {
-            Ok(WzProperty::String(other.to_string()))
-        }
+        other => Ok(WzProperty::String(other.to_string())),
     }
 }
 
@@ -353,9 +366,7 @@ fn try_decrypt_wave_format(wav_header: &mut [u8], wz_key: &[u8]) -> bool {
     WAVE_FORMAT_SIZE + extra_size == wav_header.len()
 }
 
-fn parse_sound_property<R: Read + Seek>(
-    reader: &mut WzBinaryReader<R>,
-) -> WzResult<WzProperty> {
+fn parse_sound_property<R: Read + Seek>(reader: &mut WzBinaryReader<R>) -> WzResult<WzProperty> {
     let _padding = reader.read_u8()?;
     let sound_data_len = reader.read_compressed_int()?;
     let duration = reader.read_compressed_int()?;
@@ -386,9 +397,7 @@ fn parse_sound_property<R: Read + Seek>(
     })
 }
 
-fn read_lua_data<R: Read + Seek>(
-    reader: &mut WzBinaryReader<R>,
-) -> WzResult<Vec<u8>> {
+fn read_lua_data<R: Read + Seek>(reader: &mut WzBinaryReader<R>) -> WzResult<Vec<u8>> {
     let len = reader.read_compressed_int()? as usize;
     reader.read_bytes(len)
 }
@@ -606,8 +615,8 @@ mod tests {
         // Extended: block_size(u32) + type_byte(0x73) + "Shape2D#Vector2D" string + x + y
         let mut inner = vec![0x73u8]; // inline type name
         inner.extend_from_slice(&encode_wz_ascii("Shape2D#Vector2D"));
-        inner.push(10);  // x = 10 (compressed int)
-        inner.push(20);  // y = 20 (compressed int)
+        inner.push(10); // x = 10 (compressed int)
+        inner.push(20); // y = 20 (compressed int)
 
         let mut value = vec![0x09u8];
         value.extend_from_slice(&(inner.len() as u32).to_le_bytes()); // block_size
@@ -666,10 +675,10 @@ mod tests {
         let mut inner = Vec::new();
         inner.push(0x00); // _skip byte
         inner.push(0x00); // has_children = 0 (no sub-properties)
-        inner.push(4);    // width = 4 (compressed int)
-        inner.push(8);    // height = 8 (compressed int)
-        inner.push(2);    // format_low = 2 → Bgra8888 (compressed int)
-        inner.push(0);    // format_high = 0 (compressed int)
+        inner.push(4); // width = 4 (compressed int)
+        inner.push(8); // height = 8 (compressed int)
+        inner.push(2); // format_low = 2 → Bgra8888 (compressed int)
+        inner.push(0); // format_high = 0 (compressed int)
         inner.extend_from_slice(&0i32.to_le_bytes()); // _zero
         inner.extend_from_slice(&raw_data_len.to_le_bytes()); // raw_data_len
         inner.push(0x00); // header byte
@@ -682,7 +691,15 @@ mod tests {
 
         assert_eq!(props.len(), 1);
         assert_eq!(props[0].0, "img");
-        if let WzProperty::Canvas { width, height, format, properties, png_data, .. } = &props[0].1 {
+        if let WzProperty::Canvas {
+            width,
+            height,
+            format,
+            properties,
+            png_data,
+            ..
+        } = &props[0].1
+        {
             assert_eq!(*width, 4);
             assert_eq!(*height, 8);
             assert_eq!(*format, WzPngFormat::Bgra8888);
@@ -702,16 +719,16 @@ mod tests {
         inner.push(0x00); // _skip byte
         inner.push(0x01); // has_children = 1
         inner.extend_from_slice(&0u16.to_le_bytes()); // _padding
-        // Child property list: count=1, name="delay", type=0x03(Int), value=100
+                                                      // Child property list: count=1, name="delay", type=0x03(Int), value=100
         inner.push(1); // count
         inner.extend_from_slice(&string_block("delay"));
         inner.push(0x03); // Int marker
-        inner.push(100);  // compressed int = 100
-        // PNG fields
-        inner.push(16);   // width = 16
-        inner.push(16);   // height = 16
-        inner.push(1);    // format_low = 1 → Bgra4444
-        inner.push(0);    // format_high = 0
+        inner.push(100); // compressed int = 100
+                         // PNG fields
+        inner.push(16); // width = 16
+        inner.push(16); // height = 16
+        inner.push(1); // format_low = 1 → Bgra4444
+        inner.push(0); // format_high = 0
         inner.extend_from_slice(&0i32.to_le_bytes());
         inner.extend_from_slice(&raw_data_len.to_le_bytes());
         inner.push(0x00);
@@ -722,7 +739,14 @@ mod tests {
         let mut reader = make_reader(data);
         let props = parse_image(&mut reader).unwrap();
 
-        if let WzProperty::Canvas { width, height, format, properties, .. } = &props[0].1 {
+        if let WzProperty::Canvas {
+            width,
+            height,
+            format,
+            properties,
+            ..
+        } = &props[0].1
+        {
             assert_eq!(*width, 16);
             assert_eq!(*height, 16);
             assert_eq!(*format, WzPngFormat::Bgra4444);
@@ -739,10 +763,10 @@ mod tests {
         let mut inner = Vec::new();
         inner.push(0x00); // _skip
         inner.push(0x00); // has_children = 0
-        inner.push(1);    // width
-        inner.push(1);    // height
-        inner.push(2);    // format_low
-        inner.push(0);    // format_high
+        inner.push(1); // width
+        inner.push(1); // height
+        inner.push(2); // format_low
+        inner.push(0); // format_high
         inner.extend_from_slice(&0i32.to_le_bytes());
         inner.extend_from_slice(&0i32.to_le_bytes()); // raw_data_len = 0 (invalid, must be > 1)
         inner.push(0x00);
@@ -766,12 +790,12 @@ mod tests {
         let mut inner = Vec::new();
         inner.push(0x00); // _padding
         inner.push(audio_data.len() as u8); // sound_data_len (compressed int)
-        inner.push(100);  // duration = 100ms (compressed int)
-        // Data from header_off onward:
-        inner.extend_from_slice(&sound_header);   // 51 bytes
-        inner.push(wav_format_len);               // wav_format_len byte (also read as unk1)
-        inner.extend_from_slice(&wav_format);     // wav_format_len bytes
-        inner.extend_from_slice(&audio_data);     // sound_data_len bytes
+        inner.push(100); // duration = 100ms (compressed int)
+                         // Data from header_off onward:
+        inner.extend_from_slice(&sound_header); // 51 bytes
+        inner.push(wav_format_len); // wav_format_len byte (also read as unk1)
+        inner.extend_from_slice(&wav_format); // wav_format_len bytes
+        inner.extend_from_slice(&audio_data); // sound_data_len bytes
 
         let value = build_extended_property("Sound_DX8", &inner);
         let data = build_image_with_property("snd", &value);
@@ -780,7 +804,13 @@ mod tests {
 
         assert_eq!(props.len(), 1);
         assert_eq!(props[0].0, "snd");
-        if let WzProperty::Sound { duration_ms, data, header, .. } = &props[0].1 {
+        if let WzProperty::Sound {
+            duration_ms,
+            data,
+            header,
+            ..
+        } = &props[0].1
+        {
             assert_eq!(*duration_ms, 100);
             assert_eq!(data, &audio_data);
             // header = sound_header(51) + unk1(1) + wav_format(wav_format_len)
@@ -802,7 +832,7 @@ mod tests {
         inner.push(50); // duration = 50ms
         inner.extend_from_slice(&sound_header);
         inner.push(wav_format_len); // unk1 / wav_format_len = 0
-        // no wav_format bytes
+                                    // no wav_format bytes
         inner.extend_from_slice(&audio_data);
 
         let value = build_extended_property("Sound_DX8", &inner);
@@ -810,7 +840,13 @@ mod tests {
         let mut reader = make_reader(data);
         let props = parse_image(&mut reader).unwrap();
 
-        if let WzProperty::Sound { duration_ms, data, header, .. } = &props[0].1 {
+        if let WzProperty::Sound {
+            duration_ms,
+            data,
+            header,
+            ..
+        } = &props[0].1
+        {
             assert_eq!(*duration_ms, 50);
             assert_eq!(data, &audio_data);
             // header = 51 bytes + 1 byte unk1 + 0 wav_format bytes
@@ -862,12 +898,12 @@ mod tests {
     fn test_parse_convex_property() {
         let mut inner = Vec::new();
         inner.push(2); // count = 2 points
-        // Point 1: extended Vector
+                       // Point 1: extended Vector
         inner.push(0x73);
         inner.extend_from_slice(&encode_wz_ascii("Shape2D#Vector2D"));
         inner.push(1); // x = 1
         inner.push(2); // y = 2
-        // Point 2: extended Vector
+                       // Point 2: extended Vector
         inner.push(0x73);
         inner.extend_from_slice(&encode_wz_ascii("Shape2D#Vector2D"));
         inner.push(3); // x = 3
@@ -917,7 +953,8 @@ mod tests {
     fn test_try_decrypt_wave_format_already_valid() {
         // Build a valid WAVEFORMATEX: extra_size = 0, total = 18 bytes
         let mut wav = vec![0u8; WAVE_FORMAT_SIZE];
-        wav[16] = 0; wav[17] = 0; // extra_size = 0
+        wav[16] = 0;
+        wav[17] = 0; // extra_size = 0
         let key = vec![0xFF; 18];
         let original = wav.clone();
         let result = try_decrypt_wave_format(&mut wav, &key);
@@ -936,7 +973,8 @@ mod tests {
     fn test_try_decrypt_wave_format_decrypts() {
         // Build a WAVEFORMATEX with extra_size=2, total=20 bytes
         let mut plain = vec![0u8; 20];
-        plain[16] = 2; plain[17] = 0; // extra_size = 2 → 18 + 2 = 20 ✓
+        plain[16] = 2;
+        plain[17] = 0; // extra_size = 2 → 18 + 2 = 20 ✓
 
         // Encrypt with a key
         let key = vec![0x55u8; 20];

@@ -4,17 +4,20 @@
 //! Used for newer WZ file format encryption.
 
 pub struct Snow2 {
-    s: [u32; 16],        // LFSR state
-    r1: u32,             // FSM register 1
-    r2: u32,             // FSM register 2
-    keystream: [u32; 16],// Keystream buffer (16 words = 64 bytes)
+    s: [u32; 16],         // LFSR state
+    r1: u32,              // FSM register 1
+    r2: u32,              // FSM register 2
+    keystream: [u32; 16], // Keystream buffer (16 words = 64 bytes)
     cur_index: usize,
     encrypting: bool,
 }
 
 impl Snow2 {
     pub fn new(key: &[u8], iv: &[u8], encrypting: bool) -> Self {
-        assert!(key.len() == 16 || key.len() == 32, "Key must be 16 or 32 bytes");
+        assert!(
+            key.len() == 16 || key.len() == 32,
+            "Key must be 16 or 32 bytes"
+        );
         assert!(iv.is_empty() || iv.len() == 4, "IV must be 0 or 4 bytes");
 
         let mut cipher = Snow2 {
@@ -101,9 +104,7 @@ impl Snow2 {
     }
 
     fn clock_with_feedback(&mut self) {
-        let new_s = Self::alpha_mul(self.s[0])
-            ^ self.s[2]
-            ^ Self::alpha_inv_mul(self.s[11]);
+        let new_s = Self::alpha_mul(self.s[0]) ^ self.s[2] ^ Self::alpha_inv_mul(self.s[11]);
 
         // FSM output uses s[15] and old r1/r2, computed BEFORE update
         let outfrom_fsm = self.r1.wrapping_add(self.s[15]) ^ self.r2;
@@ -122,9 +123,7 @@ impl Snow2 {
     fn refresh_keystream(&mut self) {
         for i in 0..16 {
             // LFSR update (no FSM feedback during keystream generation)
-            let new_s = Self::alpha_mul(self.s[0])
-                ^ self.s[2]
-                ^ Self::alpha_inv_mul(self.s[11]);
+            let new_s = Self::alpha_mul(self.s[0]) ^ self.s[2] ^ Self::alpha_inv_mul(self.s[11]);
 
             // FSM update (all reads use pre-shift state)
             let fsmtmp = self.r2.wrapping_add(self.s[5]);

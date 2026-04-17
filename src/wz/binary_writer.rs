@@ -212,8 +212,8 @@ impl<W: Write + Seek> WzBinaryWriter<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wz::test_utils::{dummy_header, make_reader, make_reader_with_header};
     use crate::wz::header::WzHeader;
+    use crate::wz::test_utils::{dummy_header, make_reader, make_reader_with_header};
     use std::io::Cursor;
 
     fn make_writer() -> WzBinaryWriter<Cursor<Vec<u8>>> {
@@ -397,7 +397,12 @@ mod tests {
             writer.write_compressed_int(val).unwrap();
             let data = finish_writer(writer);
             let mut reader = make_reader(data);
-            assert_eq!(reader.read_compressed_int().unwrap(), val, "Failed for {}", val);
+            assert_eq!(
+                reader.read_compressed_int().unwrap(),
+                val,
+                "Failed for {}",
+                val
+            );
         }
     }
 
@@ -408,7 +413,12 @@ mod tests {
             writer.write_compressed_long(val).unwrap();
             let data = finish_writer(writer);
             let mut reader = make_reader(data);
-            assert_eq!(reader.read_compressed_long().unwrap(), val, "Failed for {}", val);
+            assert_eq!(
+                reader.read_compressed_long().unwrap(),
+                val,
+                "Failed for {}",
+                val
+            );
         }
     }
 

@@ -95,7 +95,7 @@ mod tests {
         data.extend_from_slice(b"PKG1"); // ident
         data.extend_from_slice(&100u64.to_le_bytes()); // file_size
         data.extend_from_slice(&60u32.to_le_bytes()); // data_start = 0x3C
-        // Copyright string to fill up to offset 60
+                                                      // Copyright string to fill up to offset 60
         let copyright = b"Package file v1.0 Copyright 2009";
         data.extend_from_slice(copyright);
         // Pad to offset 60

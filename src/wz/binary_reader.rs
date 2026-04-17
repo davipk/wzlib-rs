@@ -370,7 +370,7 @@ mod tests {
         let target_str = encode_wz_ascii("AtOffset");
         let mut data = vec![0x01u8];
         data.extend_from_slice(&10i32.to_le_bytes()); // offset = 10
-        // Pad to position 10
+                                                      // Pad to position 10
         while data.len() < 10 {
             data.push(0x00);
         }

@@ -128,10 +128,8 @@ impl WzDirectoryEntry {
 
         for entry in raw_entries {
             if entry.entry_type == WzDirectoryType::Directory as u8 {
-                let mut subdir = WzDirectoryEntry::new(
-                    entry.name,
-                    WzDirectoryType::Directory as u8,
-                );
+                let mut subdir =
+                    WzDirectoryEntry::new(entry.name, WzDirectoryType::Directory as u8);
                 subdir.size = entry.size;
                 subdir.checksum = entry.checksum;
                 subdir.offset = entry.offset;
@@ -181,8 +179,11 @@ impl WzDirectoryEntry {
             if let Some(props) = img.properties.take() {
                 let image_iv = img.iv.unwrap_or(iv);
                 let header = super::header::WzHeader::dummy(0);
-                let mut img_writer =
-                    super::binary_writer::WzBinaryWriter::new(std::io::Cursor::new(Vec::new()), image_iv, header);
+                let mut img_writer = super::binary_writer::WzBinaryWriter::new(
+                    std::io::Cursor::new(Vec::new()),
+                    image_iv,
+                    header,
+                );
                 if let Some(uk) = user_key {
                     img_writer.wz_key = super::keys::WzKey::with_user_key(image_iv, uk);
                 }
@@ -218,8 +219,8 @@ impl WzDirectoryEntry {
                 // entry_type(1) + wz_string(name)
                 1 + wz_string_size(&img.name)
             };
-            size += name_size + compressed_int_size(img.size)
-                + compressed_int_size(img.checksum) + 4;
+            size +=
+                name_size + compressed_int_size(img.size) + compressed_int_size(img.checksum) + 4;
         }
         for dir in &self.subdirectories {
             let cache_key = format!("{}_{}", WzDirectoryType::Directory as u8, dir.name);
@@ -229,8 +230,8 @@ impl WzDirectoryEntry {
                 string_cache.insert(cache_key);
                 1 + wz_string_size(&dir.name)
             };
-            size += name_size + compressed_int_size(dir.size)
-                + compressed_int_size(dir.checksum) + 4;
+            size +=
+                name_size + compressed_int_size(dir.size) + compressed_int_size(dir.checksum) + 4;
         }
         size as u32
     }
@@ -404,7 +405,7 @@ mod tests {
         data.push(WzDirectoryType::Image as u8);
         data.extend_from_slice(&encode_wz_ascii("test.img"));
         data.push(10); // size
-        data.push(5);  // checksum
+        data.push(5); // checksum
         let pos = data.len() as u32;
         data.extend_from_slice(&encode_wz_offset(pos, 200));
 
@@ -439,7 +440,10 @@ mod tests {
 
         assert_eq!(dir.subdirectories.len(), 1);
         assert_eq!(dir.subdirectories[0].name, "mob");
-        assert_eq!(dir.subdirectories[0].entry_type, WzDirectoryType::Directory as u8);
+        assert_eq!(
+            dir.subdirectories[0].entry_type,
+            WzDirectoryType::Directory as u8
+        );
         assert!(dir.subdirectories[0].subdirectories.is_empty());
         assert!(dir.subdirectories[0].images.is_empty());
         assert!(dir.images.is_empty());
@@ -531,7 +535,7 @@ mod tests {
         // remember_pos = 6
 
         data.push(20); // size (at pos 6)
-        data.push(3);  // checksum (at pos 7)
+        data.push(3); // checksum (at pos 7)
         let offset_pos = data.len() as u32; // pos 8
         data.extend_from_slice(&encode_wz_offset(offset_pos, 400));
 
@@ -573,12 +577,22 @@ mod tests {
 
         let mut sub_a = WzDirectoryEntry::new("a".into(), WzDirectoryType::Directory as u8);
         sub_a.images.push(WzImageEntry {
-            name: "0.img".into(), size: 100, checksum: 10, offset: 0, properties: None, iv: None,
+            name: "0.img".into(),
+            size: 100,
+            checksum: 10,
+            offset: 0,
+            properties: None,
+            iv: None,
         });
 
         let mut sub_b = WzDirectoryEntry::new("b".into(), WzDirectoryType::Directory as u8);
         sub_b.images.push(WzImageEntry {
-            name: "0.img".into(), size: 200, checksum: 20, offset: 0, properties: None, iv: None,
+            name: "0.img".into(),
+            size: 200,
+            checksum: 20,
+            offset: 0,
+            properties: None,
+            iv: None,
         });
 
         root.subdirectories.push(sub_a);
@@ -587,17 +601,26 @@ mod tests {
         root.compute_all_offset_sizes();
 
         // Verify by doing an actual write and comparing sizes
-        let header = WzHeader { ident: String::new(), file_size: 0, data_start: 0, copyright: String::new() };
+        let header = WzHeader {
+            ident: String::new(),
+            file_size: 0,
+            data_start: 0,
+            copyright: String::new(),
+        };
         let mut writer = WzBinaryWriter::new(Cursor::new(Vec::new()), [0; 4], header);
 
         // Set dummy offsets so write_wz_offset doesn't panic
         root.offset = 0;
         root.subdirectories[0].offset = root.offset_size as u64;
-        root.subdirectories[1].offset = root.subdirectories[0].offset
-            + root.subdirectories[0].offset_size as u64;
+        root.subdirectories[1].offset =
+            root.subdirectories[0].offset + root.subdirectories[0].offset_size as u64;
 
-        for img in &mut root.subdirectories[0].images { img.offset = 1000; }
-        for img in &mut root.subdirectories[1].images { img.offset = 2000; }
+        for img in &mut root.subdirectories[0].images {
+            img.offset = 1000;
+        }
+        for img in &mut root.subdirectories[1].images {
+            img.offset = 2000;
+        }
 
         root.save_directory(&mut writer).unwrap();
         let actual_size = writer.position().unwrap() as u32;
@@ -605,8 +628,11 @@ mod tests {
         let expected = root.offset_size
             + root.subdirectories[0].offset_size
             + root.subdirectories[1].offset_size;
-        assert_eq!(actual_size, expected,
-            "Measured size ({}) must match actual written size ({})", expected, actual_size);
+        assert_eq!(
+            actual_size, expected,
+            "Measured size ({}) must match actual written size ({})",
+            expected, actual_size
+        );
     }
 
     // ── Failed subdirectory parse still includes the entry ──────────

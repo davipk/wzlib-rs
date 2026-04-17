@@ -22,9 +22,10 @@ fn decompress_dxt_block(
 
     let block_count = blocks_x * blocks_y;
     if data.len() < block_count * 16 {
-        return Err(WzError::DecompressionFailed(
-            format!("{} data too short", format_name),
-        ));
+        return Err(WzError::DecompressionFailed(format!(
+            "{} data too short",
+            format_name
+        )));
     }
 
     for by in 0..blocks_y {
@@ -84,8 +85,7 @@ fn decode_via_texture2d(
     let pixel_count = w * h;
     let mut buf = vec![0u32; pixel_count];
 
-    decode_fn(data, w, h, &mut buf)
-        .map_err(|e| WzError::DecompressionFailed(e.into()))?;
+    decode_fn(data, w, h, &mut buf).map_err(|e| WzError::DecompressionFailed(e.into()))?;
 
     let mut rgba = Vec::with_capacity(pixel_count * 4);
     for &pixel in &buf {
@@ -234,7 +234,7 @@ mod tests {
 
         let result = decompress_dxt3(&block, 4, 4).unwrap();
         assert_eq!(result.len(), 64); // 4*4*4 = 64 bytes
-        // First pixel should be white with full alpha
+                                      // First pixel should be white with full alpha
         assert_eq!(result[0], 0xFF); // R
         assert_eq!(result[1], 0xFF); // G
         assert_eq!(result[2], 0xFF); // B
@@ -249,8 +249,8 @@ mod tests {
         // All indices = 0 → all pixels get a0=255
         let mut data = [0u8; 8];
         data[0] = 255; // a0
-        data[1] = 0;   // a1
-        // indices all zero (bytes 2-7 = 0)
+        data[1] = 0; // a1
+                     // indices all zero (bytes 2-7 = 0)
         let alpha = expand_alpha_dxt5(&data);
         assert_eq!(alpha[0], 255);
         assert_eq!(alpha[15], 255);
@@ -262,13 +262,13 @@ mod tests {
         // All indices = 1 → all pixels get a1=0
         let mut data = [0u8; 8];
         data[0] = 255; // a0
-        data[1] = 0;   // a1
-        // Pack index=1 (binary 001) for first 8 pixels in bytes 2-4
-        // 001_001_001_001_001_001_001_001 = 0x249249 (24 bits)
+        data[1] = 0; // a1
+                     // Pack index=1 (binary 001) for first 8 pixels in bytes 2-4
+                     // 001_001_001_001_001_001_001_001 = 0x249249 (24 bits)
         data[2] = 0x49; // 0100_1001
         data[3] = 0x92; // 1001_0010
         data[4] = 0x24; // 0010_0100
-        // Same for next 8 pixels
+                        // Same for next 8 pixels
         data[5] = 0x49;
         data[6] = 0x92;
         data[7] = 0x24;
@@ -283,10 +283,10 @@ mod tests {
         // a0=0, a1=255 → 5-value codebook since a0 <= a1
         // table[6]=0, table[7]=255
         let mut data = [0u8; 8];
-        data[0] = 0;   // a0
+        data[0] = 0; // a0
         data[1] = 255; // a1
-        // All indices = 7 → all get table[7]=255
-        // 111_111_111_111_111_111_111_111 = 0xFFFFFF (24 bits)
+                       // All indices = 7 → all get table[7]=255
+                       // 111_111_111_111_111_111_111_111 = 0xFFFFFF (24 bits)
         data[2] = 0xFF;
         data[3] = 0xFF;
         data[4] = 0xFF;
@@ -306,10 +306,10 @@ mod tests {
         // c0=white (0xFFFF), c1=black (0x0000) → c0 > c1 → 4-color interpolation
         let colors = expand_color_table(0xFF, 0xFF, 0x00, 0x00);
         assert_eq!(colors[0], (0xFF, 0xFF, 0xFF)); // white
-        assert_eq!(colors[1], (0, 0, 0));           // black
-        // colors[2] = 2/3 white + 1/3 black
+        assert_eq!(colors[1], (0, 0, 0)); // black
+                                          // colors[2] = 2/3 white + 1/3 black
         assert!(colors[2].0 > 150); // roughly 170
-        // colors[3] = 1/3 white + 2/3 black
+                                    // colors[3] = 1/3 white + 2/3 black
         assert!(colors[3].0 < 100); // roughly 85
     }
 
@@ -329,9 +329,9 @@ mod tests {
         // Now always uses 4-color interpolation since this is only used for DXT3/DXT5.
         // c0=0x0000 (black), c1=0xFFFF (white)
         let colors = expand_color_table(0x00, 0x00, 0xFF, 0xFF);
-        assert_eq!(colors[0], (0, 0, 0));     // c0 = black
+        assert_eq!(colors[0], (0, 0, 0)); // c0 = black
         assert_eq!(colors[1], (0xFF, 0xFF, 0xFF)); // c1 = white
-        // color2 = (0*2+255+1)/3 = 85, color3 = (0+255*2+1)/3 = 170 (NOT black)
+                                                   // color2 = (0*2+255+1)/3 = 85, color3 = (0+255*2+1)/3 = 170 (NOT black)
         assert_eq!(colors[2], (85, 85, 85));
         assert_eq!(colors[3], (170, 170, 170));
     }

@@ -71,15 +71,15 @@ mod tests {
         flags: u8,
     ) -> Vec<u8> {
         let mut data = Vec::with_capacity(MCV_MIN_HEADER_SIZE);
-        data.extend_from_slice(b"MCV0");              // 0..4: signature
-        data.extend_from_slice(&[0x00, 0x00]);        // 4..6: skip
-        data.extend_from_slice(&36u16.to_le_bytes());  // 6..8: header_length
+        data.extend_from_slice(b"MCV0"); // 0..4: signature
+        data.extend_from_slice(&[0x00, 0x00]); // 4..6: skip
+        data.extend_from_slice(&36u16.to_le_bytes()); // 6..8: header_length
         data.extend_from_slice(&(fourcc ^ 0xA5A5A5A5).to_le_bytes()); // 8..12: XOR-encoded fourcc
-        data.extend_from_slice(&width.to_le_bytes());  // 12..14
+        data.extend_from_slice(&width.to_le_bytes()); // 12..14
         data.extend_from_slice(&height.to_le_bytes()); // 14..16
         data.extend_from_slice(&frame_count.to_le_bytes()); // 16..20
-        data.push(flags);                              // 20: data_flags
-        data.extend_from_slice(&[0x00, 0x00, 0x00]);  // 21..24: skip
+        data.push(flags); // 20: data_flags
+        data.extend_from_slice(&[0x00, 0x00, 0x00]); // 21..24: skip
         data.extend_from_slice(&1_000_000i64.to_le_bytes()); // 24..32: frame_delay_unit_ns
         data.extend_from_slice(&100i32.to_le_bytes()); // 32..36: default_delay
         data

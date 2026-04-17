@@ -52,10 +52,8 @@ const FNV_PRIME: u32 = 0x0100_0193;
 
 /// XOR mask applied to all ChaCha20 keys in v2
 const CHACHA20_KEY_OBSCURE: [u8; 32] = [
-    0x7B, 0x2F, 0x35, 0x48, 0x43, 0x95, 0x02, 0xB9,
-    0xAE, 0x91, 0xA6, 0xE1, 0xD8, 0xD6, 0x24, 0xB4,
-    0x33, 0x10, 0x1D, 0x3D, 0xC1, 0xBB, 0xC6, 0xF4,
-    0xA5, 0xFE, 0xB3, 0x69, 0x6B, 0x56, 0xE4, 0x75,
+    0x7B, 0x2F, 0x35, 0x48, 0x43, 0x95, 0x02, 0xB9, 0xAE, 0x91, 0xA6, 0xE1, 0xD8, 0xD6, 0x24, 0xB4,
+    0x33, 0x10, 0x1D, 0x3D, 0xC1, 0xBB, 0xC6, 0xF4, 0xA5, 0xFE, 0xB3, 0x69, 0x6B, 0x56, 0xE4, 0x75,
 ];
 
 // ── Public types ─────────────────────────────────────────────────────
@@ -259,9 +257,9 @@ fn derive_img_nonce_counter(salt: &str) -> ([u8; CHACHA_NONCE_LEN], u32) {
 
 struct ChaCha20StreamReader<'a> {
     data: &'a [u8],
-    pos: usize,          // position in source data
+    pos: usize, // position in source data
     buffer: [u8; CHACHA_BLOCK_SIZE],
-    buf_pos: usize,      // position within decrypted buffer (0..64)
+    buf_pos: usize, // position within decrypted buffer (0..64)
     cipher: ChaCha20,
 }
 
@@ -285,7 +283,8 @@ impl<'a> ChaCha20StreamReader<'a> {
                 if self.pos + CHACHA_BLOCK_SIZE > self.data.len() {
                     return Err(WzError::UnexpectedEof);
                 }
-                self.buffer.copy_from_slice(&self.data[self.pos..self.pos + CHACHA_BLOCK_SIZE]);
+                self.buffer
+                    .copy_from_slice(&self.data[self.pos..self.pos + CHACHA_BLOCK_SIZE]);
                 self.cipher.process(&mut self.buffer);
                 self.pos += CHACHA_BLOCK_SIZE;
                 self.buf_pos = 0;
@@ -762,11 +761,7 @@ fn encrypt_entry_data_v1(
     buffer
 }
 
-fn build_ms_file_v1(
-    file_name: &str,
-    salt: &str,
-    entries: &[MsSaveEntry],
-) -> WzResult<Vec<u8>> {
+fn build_ms_file_v1(file_name: &str, salt: &str, entries: &[MsSaveEntry]) -> WzResult<Vec<u8>> {
     let file_name_lower = file_name.to_lowercase();
     let mut output = Vec::new();
 
@@ -817,7 +812,8 @@ fn build_ms_file_v1(
         let flags: i32 = 0;
         let unk1: i32 = 0;
         let unk2: i32 = 0;
-        let checksum = flags + (block_offset / BLOCK_ALIGNMENT) as i32
+        let checksum = flags
+            + (block_offset / BLOCK_ALIGNMENT) as i32
             + entry.image_data.len() as i32
             + aligned_size as i32
             + unk1
@@ -886,8 +882,7 @@ impl ChaCha20StreamWriter {
         while offset < data.len() {
             let space = CHACHA_BLOCK_SIZE - self.buf_pos;
             let n = (data.len() - offset).min(space);
-            self.buffer[self.buf_pos..self.buf_pos + n]
-                .copy_from_slice(&data[offset..offset + n]);
+            self.buffer[self.buf_pos..self.buf_pos + n].copy_from_slice(&data[offset..offset + n]);
             self.buf_pos += n;
             offset += n;
 
@@ -925,7 +920,6 @@ impl ChaCha20StreamWriter {
         }
         self.output
     }
-
 }
 
 // ── V2 entry data encryption ────────────────────────────────────────
@@ -991,18 +985,12 @@ fn v2_encode_salt(salt: &str, shifted_rand: &[u8]) -> (Vec<u8>, i32, i32) {
 
 // ── V2 from-scratch file builder ────────────────────────────────────
 
-fn build_ms_file_v2(
-    file_name: &str,
-    salt: &str,
-    entries: &[MsSaveEntry],
-) -> WzResult<Vec<u8>> {
+fn build_ms_file_v2(file_name: &str, salt: &str, entries: &[MsSaveEntry]) -> WzResult<Vec<u8>> {
     let file_name_lower = file_name.to_lowercase();
     let mut output = Vec::new();
 
     let rand_bytes = generate_rand_bytes(rand_byte_count(&file_name_lower));
-    let shifted_rand: Vec<u8> = rand_bytes.iter()
-        .map(|&b| ((b as i8) >> 1) as u8)
-        .collect();
+    let shifted_rand: Vec<u8> = rand_bytes.iter().map(|&b| ((b as i8) >> 1) as u8).collect();
 
     output.extend_from_slice(&rand_bytes);
 
@@ -1045,7 +1033,8 @@ fn build_ms_file_v2(
         let flags: i32 = 0;
         let unk1: i32 = 0;
         let unk2: i32 = 0;
-        let checksum = flags + block_idx as i32
+        let checksum = flags
+            + block_idx as i32
             + entry.image_data.len() as i32
             + aligned_size as i32
             + unk1
@@ -1550,7 +1539,10 @@ mod tests {
             assert_eq!(parsed.entries[i].name, entries[i].name);
             assert_eq!(parsed.entries[i].size, entries[i].image_data.len());
             let decrypted = decrypt_entry_data(&saved, &parsed, i).unwrap();
-            assert_eq!(&decrypted[..entries[i].image_data.len()], &entries[i].image_data[..]);
+            assert_eq!(
+                &decrypted[..entries[i].image_data.len()],
+                &entries[i].image_data[..]
+            );
         }
     }
 
@@ -1586,5 +1578,4 @@ mod tests {
             assert_eq!(val, c, "Failed to encode ASCII {}", c);
         }
     }
-
 }

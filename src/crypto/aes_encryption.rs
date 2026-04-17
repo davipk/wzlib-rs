@@ -5,7 +5,7 @@
 use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes256;
 
-use super::constants::{trimmed_user_key, trimmed_key_from};
+use super::constants::{trimmed_key_from, trimmed_user_key};
 
 fn expand_iv(iv: &[u8; 4]) -> [u8; 16] {
     let mut block = [0u8; 16];
@@ -84,8 +84,8 @@ mod tests {
         assert_eq!(
             block,
             [
-                0x4D, 0x23, 0xC7, 0x2B, 0x4D, 0x23, 0xC7, 0x2B, 0x4D, 0x23, 0xC7, 0x2B, 0x4D,
-                0x23, 0xC7, 0x2B,
+                0x4D, 0x23, 0xC7, 0x2B, 0x4D, 0x23, 0xC7, 0x2B, 0x4D, 0x23, 0xC7, 0x2B, 0x4D, 0x23,
+                0xC7, 0x2B,
             ]
         );
     }

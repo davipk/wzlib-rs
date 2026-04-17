@@ -27,7 +27,10 @@ pub enum WzProperty {
         png_data: Vec<u8>, // raw compressed PNG, not yet decoded to pixels
     },
 
-    Vector { x: i32, y: i32 },
+    Vector {
+        x: i32,
+        y: i32,
+    },
 
     Convex {
         points: Vec<(String, WzProperty)>,

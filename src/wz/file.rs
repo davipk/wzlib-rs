@@ -41,10 +41,7 @@ pub fn detect_file_type(data: &[u8]) -> WzFileType {
 // ── Hotfix Data.wz parsing ──────────────────────────────────────────
 
 /// Parses a hotfix Data.wz file (the entire file is a single WzImage, no PKG1 header).
-pub fn parse_hotfix_data_wz(
-    data: &[u8],
-    iv: [u8; 4],
-) -> WzResult<Vec<(String, WzProperty)>> {
+pub fn parse_hotfix_data_wz(data: &[u8], iv: [u8; 4]) -> WzResult<Vec<(String, WzProperty)>> {
     parse_hotfix_data_wz_with_user_key(data, iv, None)
 }
 
@@ -179,7 +176,8 @@ impl WzFile {
 
     pub fn save(&mut self) -> WzResult<Vec<u8>> {
         let mut image_data_buf = Vec::new();
-        self.directory.generate_data(self.iv, self.user_key, &mut image_data_buf)?;
+        self.directory
+            .generate_data(self.iv, self.user_key, &mut image_data_buf)?;
         self.save_with_image_data(&[&image_data_buf])
     }
 
@@ -241,10 +239,7 @@ impl WzFile {
     }
 }
 
-pub fn save_hotfix_data_wz(
-    properties: &[(String, WzProperty)],
-    iv: [u8; 4],
-) -> WzResult<Vec<u8>> {
+pub fn save_hotfix_data_wz(properties: &[(String, WzProperty)], iv: [u8; 4]) -> WzResult<Vec<u8>> {
     save_hotfix_data_wz_with_user_key(properties, iv, None)
 }
 
@@ -260,11 +255,7 @@ pub fn save_hotfix_data_wz_with_user_key(
         data_start: 0,
         copyright: String::new(),
     };
-    let mut writer = super::binary_writer::WzBinaryWriter::new(
-        Cursor::new(Vec::new()),
-        iv,
-        header,
-    );
+    let mut writer = super::binary_writer::WzBinaryWriter::new(Cursor::new(Vec::new()), iv, header);
     if let Some(uk) = user_key {
         writer.wz_key = super::keys::WzKey::with_user_key(iv, uk);
     }
@@ -272,9 +263,7 @@ pub fn save_hotfix_data_wz_with_user_key(
     Ok(writer.writer.into_inner())
 }
 
-fn check_64bit_client<R: Read + Seek>(
-    reader: &mut WzBinaryReader<R>,
-) -> WzResult<bool> {
+fn check_64bit_client<R: Read + Seek>(reader: &mut WzBinaryReader<R>) -> WzResult<bool> {
     let fstart = reader.header.data_start as u64;
 
     if reader.header.file_size < 2 {
@@ -332,10 +321,12 @@ fn try_decode<R: Read + Seek>(
         Err(_) => return Ok(None),
     };
 
-    let first_image = dir.images.first()
-        .or_else(|| dir.subdirectories.iter()
+    let first_image = dir.images.first().or_else(|| {
+        dir.subdirectories
+            .iter()
             .flat_map(|d| d.images.iter())
-            .next());
+            .next()
+    });
 
     if let Some(img) = first_image {
         let saved_pos = reader.position()?;
@@ -413,18 +404,27 @@ mod tests {
 
     #[test]
     fn test_detect_standard_wz() {
-        assert_eq!(detect_file_type(b"PKG1\x00\x00\x00\x00"), WzFileType::Standard);
+        assert_eq!(
+            detect_file_type(b"PKG1\x00\x00\x00\x00"),
+            WzFileType::Standard
+        );
     }
 
     #[test]
     fn test_detect_hotfix_data_wz() {
-        assert_eq!(detect_file_type(&[0x73, 0x00, 0x00, 0x00]), WzFileType::HotfixDataWz);
+        assert_eq!(
+            detect_file_type(&[0x73, 0x00, 0x00, 0x00]),
+            WzFileType::HotfixDataWz
+        );
     }
 
     #[test]
     fn test_detect_list_file() {
         // i32 length = 25, first byte 0x19 — not PKG1 and not 0x73
-        assert_eq!(detect_file_type(&[0x19, 0x00, 0x00, 0x00]), WzFileType::ListFile);
+        assert_eq!(
+            detect_file_type(&[0x19, 0x00, 0x00, 0x00]),
+            WzFileType::ListFile
+        );
     }
 
     #[test]
@@ -475,7 +475,7 @@ mod tests {
         data.extend_from_slice(&encode_ascii_bms("Property"));
         data.extend_from_slice(&0u16.to_le_bytes());
         data.push(2); // count = 2
-        // Property 1: "a" = Null
+                      // Property 1: "a" = Null
         data.push(0x73);
         data.extend_from_slice(&encode_ascii_bms("a"));
         data.push(0x00);
@@ -599,12 +599,8 @@ mod tests {
         let img = &parsed.directory.images[0];
         let iv = WzMapleVersion::Bms.iv();
         let header = parsed.header.clone();
-        let mut reader = crate::wz::binary_reader::WzBinaryReader::new(
-            Cursor::new(&saved),
-            iv,
-            header,
-            0,
-        );
+        let mut reader =
+            crate::wz::binary_reader::WzBinaryReader::new(Cursor::new(&saved), iv, header, 0);
         reader.seek(img.offset).unwrap();
         let props = crate::wz::image::parse_image(&mut reader).unwrap();
         assert_eq!(props.len(), 2);
@@ -626,17 +622,29 @@ mod tests {
         // measure_entry_table_size didn't account for caching, producing
         // a gap of zero bytes between directory tables and image data.
         let make_img = |name: &str, props: Vec<(String, WzProperty)>| WzImageEntry {
-            name: name.into(), size: 0, checksum: 0, offset: 0,
-            properties: Some(props), iv: None,
+            name: name.into(),
+            size: 0,
+            checksum: 0,
+            offset: 0,
+            properties: Some(props),
+            iv: None,
         };
 
         let mut sub_a = WzDirectoryEntry::new("skillA".into(), WzDirectoryType::Directory as u8);
-        sub_a.images.push(make_img("0.img", vec![("x".into(), WzProperty::Int(1))]));
-        sub_a.images.push(make_img("1.img", vec![("y".into(), WzProperty::Int(2))]));
+        sub_a
+            .images
+            .push(make_img("0.img", vec![("x".into(), WzProperty::Int(1))]));
+        sub_a
+            .images
+            .push(make_img("1.img", vec![("y".into(), WzProperty::Int(2))]));
 
         let mut sub_b = WzDirectoryEntry::new("skillB".into(), WzDirectoryType::Directory as u8);
-        sub_b.images.push(make_img("0.img", vec![("x".into(), WzProperty::Int(3))]));
-        sub_b.images.push(make_img("1.img", vec![("y".into(), WzProperty::Int(4))]));
+        sub_b
+            .images
+            .push(make_img("0.img", vec![("x".into(), WzProperty::Int(3))]));
+        sub_b
+            .images
+            .push(make_img("1.img", vec![("y".into(), WzProperty::Int(4))]));
 
         let mut dir = WzDirectoryEntry::new(String::new(), WzDirectoryType::Directory as u8);
         dir.subdirectories.push(sub_a);
@@ -647,10 +655,13 @@ mod tests {
 
         let mut wz_file = WzFile {
             header: WzHeader {
-                ident: "PKG1".into(), file_size: 0, data_start: 60,
+                ident: "PKG1".into(),
+                file_size: 0,
+                data_start: 60,
                 copyright: String::new(),
             },
-            version, version_hash: hash,
+            version,
+            version_hash: hash,
             maple_version: WzMapleVersion::Bms,
             iv: WzMapleVersion::Bms.iv(),
             user_key: None,
@@ -670,7 +681,10 @@ mod tests {
         for sub in &parsed.directory.subdirectories {
             for img in &sub.images {
                 let mut reader = crate::wz::binary_reader::WzBinaryReader::new(
-                    Cursor::new(&saved), iv, parsed.header.clone(), 0,
+                    Cursor::new(&saved),
+                    iv,
+                    parsed.header.clone(),
+                    0,
                 );
                 reader.seek(img.offset).unwrap();
                 let props = crate::wz::image::parse_image(&mut reader).unwrap();
@@ -685,23 +699,30 @@ mod tests {
         for sub in &mut wz2.directory.subdirectories {
             for img in &mut sub.images {
                 let mut reader = crate::wz::binary_reader::WzBinaryReader::new(
-                    Cursor::new(&saved), iv, wz2.header.clone(), 0,
+                    Cursor::new(&saved),
+                    iv,
+                    wz2.header.clone(),
+                    0,
                 );
                 reader.seek(img.offset).unwrap();
                 img.properties = Some(crate::wz::image::parse_image(&mut reader).unwrap());
             }
         }
         let saved2 = wz2.save().unwrap();
-        assert_eq!(saved.len(), saved2.len(), "Re-save should produce identical size");
+        assert_eq!(
+            saved.len(),
+            saved2.len(),
+            "Re-save should produce identical size"
+        );
     }
 
     // ── Hybrid IV preservation ───────────────────────────────────────
 
     #[test]
     fn test_hybrid_iv_save_roundtrip() {
+        use crate::crypto::{WZ_BMSCLASSIC_IV, WZ_GMSIV};
         use crate::wz::directory::{WzDirectoryEntry, WzImageEntry};
         use crate::wz::types::WzDirectoryType;
-        use crate::crypto::{WZ_GMSIV, WZ_BMSCLASSIC_IV};
 
         // Image A: uses GMS key (different from directory BMS key)
         let props_a = vec![("a".into(), WzProperty::Int(1))];
@@ -711,13 +732,17 @@ mod tests {
         let mut dir = WzDirectoryEntry::new(String::new(), WzDirectoryType::Directory as u8);
         dir.images.push(WzImageEntry {
             name: "gms.img".into(),
-            size: 0, checksum: 0, offset: 0,
+            size: 0,
+            checksum: 0,
+            offset: 0,
             properties: Some(props_a),
             iv: Some(WZ_GMSIV),
         });
         dir.images.push(WzImageEntry {
             name: "bms.img".into(),
-            size: 0, checksum: 0, offset: 0,
+            size: 0,
+            checksum: 0,
+            offset: 0,
             properties: Some(props_b),
             iv: None, // falls back to directory IV (BMS)
         });
@@ -732,7 +757,8 @@ mod tests {
                 data_start: 60,
                 copyright: String::new(),
             },
-            version, version_hash: hash,
+            version,
+            version_hash: hash,
             maple_version: WzMapleVersion::Bms,
             iv: WZ_BMSCLASSIC_IV,
             user_key: None,
@@ -750,7 +776,10 @@ mod tests {
         let img_a = &parsed.directory.images[0];
         let header = parsed.header.clone();
         let mut reader = crate::wz::binary_reader::WzBinaryReader::new(
-            Cursor::new(&saved), WZ_BMSCLASSIC_IV, header.clone(), 0,
+            Cursor::new(&saved),
+            WZ_BMSCLASSIC_IV,
+            header.clone(),
+            0,
         );
         reader.hash = parsed.version_hash;
         reader.seek(img_a.offset).unwrap();
@@ -763,7 +792,10 @@ mod tests {
         // Image B (BMS-encrypted) should be readable directly
         let img_b = &parsed.directory.images[1];
         let mut reader = crate::wz::binary_reader::WzBinaryReader::new(
-            Cursor::new(&saved), WZ_BMSCLASSIC_IV, header, 0,
+            Cursor::new(&saved),
+            WZ_BMSCLASSIC_IV,
+            header,
+            0,
         );
         reader.hash = parsed.version_hash;
         reader.seek(img_b.offset).unwrap();
