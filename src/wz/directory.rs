@@ -54,6 +54,10 @@ impl WzDirectoryEntry {
         }
     }
 
+    pub fn root() -> Self {
+        Self::new(String::new(), WzDirectoryType::Directory as u8)
+    }
+
     pub fn parse<R: std::io::Read + std::io::Seek>(
         reader: &mut WzBinaryReader<R>,
     ) -> WzResult<Self> {
@@ -67,7 +71,7 @@ impl WzDirectoryEntry {
             )));
         }
 
-        let mut dir = WzDirectoryEntry::new(String::new(), WzDirectoryType::Directory as u8);
+        let mut dir = WzDirectoryEntry::root();
 
         struct RawEntry {
             entry_type: u8,

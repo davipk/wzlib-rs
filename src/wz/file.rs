@@ -10,7 +10,7 @@ use super::error::{WzError, WzResult};
 use super::header::WzHeader;
 use super::image::parse_image;
 use super::properties::WzProperty;
-use super::types::WzMapleVersion;
+use super::types::{WzDirectoryType, WzMapleVersion};
 
 const WZ_VERSION_HEADER_64BIT_START: u16 = 770;
 const WZ_HEADER_MAGIC: [u8; 4] = *b"PKG1";
@@ -120,6 +120,24 @@ impl WzFile {
         } else {
             reader.read_u16()?
         };
+
+        // KMST1125+ stub WZ files have valid PKG1 headers but zero entries —
+        // skip the 0..2000 brute-force, which can't validate a hash with no image.
+        let entry_count_pos = reader.position()?;
+        let entry_count = reader.read_compressed_int()?;
+        if entry_count == 0 {
+            return Ok(WzFile {
+                header: reader.header,
+                version: 0,
+                version_hash: 0,
+                maple_version,
+                iv,
+                user_key,
+                is_64bit,
+                directory: WzDirectoryEntry::root(),
+            });
+        }
+        reader.seek(entry_count_pos)?;
 
         if let Some(ver) = expected_version {
             let hash = check_and_get_version_hash(wz_version_header, ver);
@@ -543,6 +561,71 @@ mod tests {
         assert_eq!(parsed[0].1.as_str(), Some("mob"));
         assert_eq!(parsed[1].0, "hp");
         assert_eq!(parsed[1].1.as_int(), Some(100));
+    }
+
+    // ── empty-stub WZ files ──────────────────────────────────────────
+
+    /// Layout: PKG1 | file_size u64 | data_start u32=16 | body
+    fn build_pkg1_stub(body: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"PKG1");
+        out.extend_from_slice(&(body.len() as u64).to_le_bytes());
+        out.extend_from_slice(&16u32.to_le_bytes());
+        out.extend_from_slice(body);
+        out
+    }
+
+    #[test]
+    fn test_parse_empty_stub_returns_empty_directory() {
+        let data = build_pkg1_stub(&[0x34, 0x00, 0x00]); // encVer=0x34, count=0
+
+        let wz = WzFile::parse_with_iv_and_user_key(
+            &data,
+            WzMapleVersion::Bms,
+            WzMapleVersion::Bms.iv(),
+            None,
+            None,
+        )
+        .expect("empty stub should parse");
+
+        assert_eq!(wz.version, 0);
+        assert_eq!(wz.version_hash, 0);
+        assert!(wz.directory.subdirectories.is_empty());
+        assert!(wz.directory.images.is_empty());
+    }
+
+    #[test]
+    fn test_parse_empty_stub_ignores_encver_mismatch() {
+        let data = build_pkg1_stub(&[0x00, 0x00, 0x00]); // encVer=0x00, count=0
+
+        let result = WzFile::parse_with_iv_and_user_key(
+            &data,
+            WzMapleVersion::Bms,
+            WzMapleVersion::Bms.iv(),
+            None,
+            None,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_nonempty_unparseable_still_errors() {
+        let data = build_pkg1_stub(&[0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]); // count=1 + junk
+
+        let result = WzFile::parse_with_iv_and_user_key(
+            &data,
+            WzMapleVersion::Bms,
+            WzMapleVersion::Bms.iv(),
+            None,
+            None,
+        );
+
+        match result {
+            Err(WzError::InvalidVersion(_)) => {}
+            Err(other) => panic!("expected InvalidVersion, got {other:?}"),
+            Ok(_) => panic!("expected error, got success"),
+        }
     }
 
     // ── WzFile::save roundtrip ───────────────────────────────────────
