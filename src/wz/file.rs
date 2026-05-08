@@ -339,12 +339,7 @@ fn try_decode<R: Read + Seek>(
         Err(_) => return Ok(None),
     };
 
-    let first_image = dir.images.first().or_else(|| {
-        dir.subdirectories
-            .iter()
-            .flat_map(|d| d.images.iter())
-            .next()
-    });
+    let first_image = first_image_in_directory(&dir);
 
     if let Some(img) = first_image {
         let saved_pos = reader.position()?;
@@ -359,13 +354,7 @@ fn try_decode<R: Read + Seek>(
                 return Ok(None);
             }
         }
-    } else if is_64bit {
-        // Empty directory is OK for 64-bit files, but reject version 113
-        // to avoid a known hash collision (MSEA v194 Map001.wz falsely matches).
-        if patch_version == 113 {
-            return Ok(None);
-        }
-    } else {
+    } else if !should_accept_directory_only_wz(&dir, is_64bit, patch_version) {
         return Ok(None);
     }
 
@@ -379,6 +368,42 @@ fn try_decode<R: Read + Seek>(
         is_64bit,
         directory: dir,
     }))
+}
+
+fn first_image_in_directory(dir: &WzDirectoryEntry) -> Option<&super::directory::WzImageEntry> {
+    dir.images
+        .first()
+        .or_else(|| dir.subdirectories.iter().find_map(first_image_in_directory))
+}
+
+fn should_accept_directory_only_wz(
+    dir: &WzDirectoryEntry,
+    is_64bit: bool,
+    patch_version: i16,
+) -> bool {
+    if is_64bit {
+        // Empty directory is OK for 64-bit files, but reject version 113
+        // to avoid a known hash collision (MSEA v194 Map001.wz falsely matches).
+        return patch_version != 113;
+    }
+
+    !dir.subdirectories.is_empty() && is_valid_directory_only_tree(dir)
+}
+
+fn is_valid_directory_only_tree(dir: &WzDirectoryEntry) -> bool {
+    dir.images.is_empty()
+        && dir.subdirectories.iter().all(|child| {
+            is_plausible_directory_name(&child.name) && is_valid_directory_only_tree(child)
+        })
+}
+
+// from_utf16_lossy / from_utf8_lossy in read_wz_string substitute U+FFFD
+// for invalid sequences, so wrong-version brute-force decryption produces
+// names full of replacement and control characters. Reject those.
+fn is_plausible_directory_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains(char::REPLACEMENT_CHARACTER)
+        && !name.chars().any(char::is_control)
 }
 
 pub fn compute_version_hash(version: i16) -> u32 {
@@ -416,6 +441,7 @@ fn check_and_get_version_hash(wz_version_header: u16, patch_version: i16) -> u32
 
 #[cfg(test)]
 mod tests {
+    use super::super::types::WzDirectoryType;
     use super::*;
 
     // ── detect_file_type ──────────────────────────────────────────
@@ -607,6 +633,56 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_directory_only_stub_returns_directories() {
+        let version = 1i16;
+        let hash = compute_version_hash(version);
+
+        let mut character =
+            WzDirectoryEntry::new("Character".into(), WzDirectoryType::Directory as u8);
+        character.subdirectories.push(WzDirectoryEntry::new(
+            "Accessory".into(),
+            WzDirectoryType::Directory as u8,
+        ));
+
+        let mut directory = WzDirectoryEntry::root();
+        directory.subdirectories.push(WzDirectoryEntry::new(
+            "Effect".into(),
+            WzDirectoryType::Directory as u8,
+        ));
+        directory.subdirectories.push(character);
+
+        let mut wz_file = WzFile {
+            header: WzHeader {
+                ident: "PKG1".into(),
+                file_size: 0,
+                data_start: 60,
+                copyright: String::new(),
+            },
+            version,
+            version_hash: hash,
+            maple_version: WzMapleVersion::Bms,
+            iv: WzMapleVersion::Bms.iv(),
+            user_key: None,
+            is_64bit: false,
+            directory,
+        };
+
+        let saved = wz_file.save().unwrap();
+        let parsed = WzFile::parse(&saved, WzMapleVersion::Bms, None).unwrap();
+
+        assert_eq!(parsed.version, version);
+        assert_eq!(parsed.version_hash, hash);
+        assert!(first_image_in_directory(&parsed.directory).is_none());
+        assert_eq!(parsed.directory.subdirectories.len(), 2);
+        assert_eq!(parsed.directory.subdirectories[0].name, "Effect");
+        assert_eq!(parsed.directory.subdirectories[1].name, "Character");
+        assert_eq!(
+            parsed.directory.subdirectories[1].subdirectories[0].name,
+            "Accessory"
+        );
     }
 
     #[test]
