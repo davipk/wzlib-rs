@@ -87,9 +87,12 @@ fn decode_via_texture2d(
 
     decode_fn(data, w, h, &mut buf).map_err(|e| WzError::DecompressionFailed(e.into()))?;
 
+    // texture2ddecoder packs each pixel as 0xAARRGGBB, so to_le_bytes() yields
+    // [B, G, R, A]. Reorder to RGBA to match every other decoder in this crate.
     let mut rgba = Vec::with_capacity(pixel_count * 4);
     for &pixel in &buf {
-        rgba.extend_from_slice(&pixel.to_le_bytes());
+        let [b, g, r, a] = pixel.to_le_bytes();
+        rgba.extend_from_slice(&[r, g, b, a]);
     }
     Ok(rgba)
 }
@@ -360,6 +363,22 @@ mod tests {
         assert_eq!(result[0], 0xFF); // R
         assert_eq!(result[1], 0xFF); // G
         assert_eq!(result[2], 0xFF); // B
+        assert_eq!(result[3], 0xFF); // A
+    }
+
+    #[test]
+    fn test_decompress_dxt1_channel_order_is_rgba() {
+        // 4x4 = one 8-byte BC1 block decoding to pure red.
+        // color0 = RGB565 red (0xF800) > color1 = 0x0000 → 4-color, opaque.
+        // All indices 0 → every pixel is color0 (red).
+        let block = [0x00, 0xF8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+
+        let result = decompress_dxt1(&block, 4, 4).unwrap();
+        assert_eq!(result.len(), 64);
+        // Must be red (255,0,0), not blue (0,0,255) — proves no R/B swap.
+        assert_eq!(result[0], 0xFF); // R
+        assert_eq!(result[1], 0x00); // G
+        assert_eq!(result[2], 0x00); // B
         assert_eq!(result[3], 0xFF); // A
     }
 }
