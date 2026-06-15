@@ -334,18 +334,18 @@ mod tests {
 
     #[test]
     fn test_roundtrip_float_nonzero() {
-        let props = write_then_read(vec![("f".into(), WzProperty::Float(3.14))]);
+        let props = write_then_read(vec![("f".into(), WzProperty::Float(1.5))]);
         let v = props[0].1.as_float().unwrap();
-        assert!((v - 3.14f32 as f64).abs() < 0.001);
+        assert!((v - 1.5f32 as f64).abs() < 0.001);
     }
 
     // ── Double ───────────────────────────────────────────────────────
 
     #[test]
     fn test_roundtrip_double() {
-        let props = write_then_read(vec![("d".into(), WzProperty::Double(2.718281828))]);
+        let props = write_then_read(vec![("d".into(), WzProperty::Double(123.456))]);
         let v = props[0].1.as_float().unwrap();
-        assert!((v - 2.718281828).abs() < 1e-9);
+        assert!((v - 123.456).abs() < 1e-9);
     }
 
     // ── String ───────────────────────────────────────────────────────

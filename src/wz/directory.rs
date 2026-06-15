@@ -560,9 +560,7 @@ mod tests {
 
     #[test]
     fn test_parse_invalid_entry_type() {
-        let mut data = Vec::new();
-        data.push(0x01);
-        data.push(0x05); // invalid type
+        let data = vec![0x01, 0x05]; // second byte is an invalid type
         let mut reader = make_reader(data);
         assert!(WzDirectoryEntry::parse(&mut reader).is_err());
     }

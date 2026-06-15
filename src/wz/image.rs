@@ -588,12 +588,12 @@ mod tests {
     #[test]
     fn test_parse_double_property() {
         let mut value = vec![0x05u8];
-        value.extend_from_slice(&3.14f64.to_le_bytes());
+        value.extend_from_slice(&1.5f64.to_le_bytes());
         let data = build_image_with_property("d", &value);
         let mut reader = make_reader(data);
         let props = parse_image(&mut reader).unwrap();
         let v = props[0].1.as_float().unwrap();
-        assert!((v - 3.14).abs() < f64::EPSILON);
+        assert!((v - 1.5).abs() < f64::EPSILON);
     }
 
     // ── String property (marker 0x08) ──────────────────────────────
@@ -672,13 +672,14 @@ mod tests {
         let png_payload = vec![0xAA, 0xBB, 0xCC]; // 3 bytes of fake PNG data
         let raw_data_len: i32 = png_payload.len() as i32 + 1; // +1 for header byte
 
-        let mut inner = Vec::new();
-        inner.push(0x00); // _skip byte
-        inner.push(0x00); // has_children = 0 (no sub-properties)
-        inner.push(4); // width = 4 (compressed int)
-        inner.push(8); // height = 8 (compressed int)
-        inner.push(2); // format_low = 2 → Bgra8888 (compressed int)
-        inner.push(0); // format_high = 0 (compressed int)
+        let mut inner = vec![
+            0x00, // _skip byte
+            0x00, // has_children = 0 (no sub-properties)
+            4,    // width = 4 (compressed int)
+            8,    // height = 8 (compressed int)
+            2,    // format_low = 2 → Bgra8888 (compressed int)
+            0,    // format_high = 0 (compressed int)
+        ];
         inner.extend_from_slice(&0i32.to_le_bytes()); // _zero
         inner.extend_from_slice(&raw_data_len.to_le_bytes()); // raw_data_len
         inner.push(0x00); // header byte
@@ -760,13 +761,14 @@ mod tests {
 
     #[test]
     fn test_parse_canvas_invalid_data_len() {
-        let mut inner = Vec::new();
-        inner.push(0x00); // _skip
-        inner.push(0x00); // has_children = 0
-        inner.push(1); // width
-        inner.push(1); // height
-        inner.push(2); // format_low
-        inner.push(0); // format_high
+        let mut inner = vec![
+            0x00, // _skip
+            0x00, // has_children = 0
+            1,    // width
+            1,    // height
+            2,    // format_low
+            0,    // format_high
+        ];
         inner.extend_from_slice(&0i32.to_le_bytes());
         inner.extend_from_slice(&0i32.to_le_bytes()); // raw_data_len = 0 (invalid, must be > 1)
         inner.push(0x00);
@@ -881,9 +883,10 @@ mod tests {
 
     #[test]
     fn test_parse_uol_unsupported_type() {
-        let mut inner = Vec::new();
-        inner.push(0x00); // _skip
-        inner.push(0x99); // unsupported uol_type
+        let inner = vec![
+            0x00, // _skip
+            0x99, // unsupported uol_type
+        ];
 
         let value = build_extended_property("UOL", &inner);
         let data = build_image_with_property("bad", &value);

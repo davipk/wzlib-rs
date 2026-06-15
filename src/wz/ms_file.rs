@@ -148,14 +148,14 @@ fn derive_key_core(file_name_with_salt: &str, is_entry_key: bool, out: &mut [u8]
     let len = chars.len();
 
     if !is_entry_key {
-        for i in 0..out.len() {
-            out[i] = (chars[i % len] as u8).wrapping_add(i as u8);
+        for (i, out_byte) in out.iter_mut().enumerate() {
+            *out_byte = (chars[i % len] as u8).wrapping_add(i as u8);
         }
     } else {
-        for i in 0..out.len() {
+        for (i, out_byte) in out.iter_mut().enumerate() {
             let char_idx = len - 1 - (i % len);
             let multiplier = (i % 3 + 2) as u8;
-            out[i] = (i as u8).wrapping_add(multiplier.wrapping_mul(chars[char_idx] as u8));
+            *out_byte = (i as u8).wrapping_add(multiplier.wrapping_mul(chars[char_idx] as u8));
         }
     }
 }
@@ -353,9 +353,9 @@ pub fn parse_ms_file(data: &[u8], file_name: &str) -> WzResult<MsParsedFile> {
     let version_byte = data[rbc] ^ shifted[0];
 
     if version_byte == MS_VERSION_V2 {
-        match parse_ms_file_v2(data, &file_name_lower, &shifted, rbc) {
-            Ok(result) => return Ok(result),
-            Err(_) => {} // v2 detection was a false positive, try v1
+        // v2 detection may be a false positive; fall through to v1 on error
+        if let Ok(result) = parse_ms_file_v2(data, &file_name_lower, &shifted, rbc) {
+            return Ok(result);
         }
     }
 
@@ -563,7 +563,7 @@ fn parse_ms_file_v2(
         header_block[7],
     ]);
 
-    if entry_count < 0 || entry_count > 100_000 {
+    if !(0..=100_000).contains(&entry_count) {
         return Err(WzError::Custom(format!(
             "MS v2 entry count out of range: {}",
             entry_count
@@ -773,8 +773,8 @@ fn build_ms_file_v1(file_name: &str, salt: &str, entries: &[MsSaveEntry]) -> WzR
     write_i32_le(&mut output, hashed_salt_len);
 
     let mut salt_u16_values = Vec::with_capacity(salt_len);
-    for i in 0..salt_len {
-        let lo = salt.as_bytes()[i] ^ rand_bytes[i];
+    for (i, &sb) in salt.as_bytes().iter().enumerate() {
+        let lo = sb ^ rand_bytes[i];
         output.push(lo);
         output.push(0);
         salt_u16_values.push(u16::from_le_bytes([lo, 0]));
@@ -795,7 +795,7 @@ fn build_ms_file_v1(file_name: &str, salt: &str, entries: &[MsSaveEntry]) -> WzR
     output.extend_from_slice(&header_buf[..9]);
 
     let pad = entry_pad_amount(&file_name_lower) + 33;
-    output.extend(std::iter::repeat(0u8).take(pad));
+    output.extend(std::iter::repeat_n(0u8, pad));
 
     let mut entry_buf = Vec::new();
     let mut block_offset: usize = 0;
@@ -1020,7 +1020,7 @@ fn build_ms_file_v2(file_name: &str, salt: &str, entries: &[MsSaveEntry]) -> WzR
     // entry_start = header_pos + 8 + pad + 64 (block), so inter-pad = 8 + pad
     let epa = entry_pad_amount(&file_name_lower);
     let inter_pad_len = 8 + epa;
-    output.extend(std::iter::repeat(0u8).take(inter_pad_len));
+    output.extend(std::iter::repeat_n(0u8, inter_pad_len));
 
     let entry_key_chacha = derive_chacha_key(&file_name_with_salt, true);
     let mut writer = ChaCha20StreamWriter::new(&entry_key_chacha, &empty_nonce);
